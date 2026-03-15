@@ -1,8 +1,9 @@
 import uuid
-from datetime import time
+from datetime import date, datetime, time
 
 from pydantic import BaseModel, Field
 
+from app.core.constants import SeatStatus, TripStatus
 from app.schemas.common import BaseSchema
 
 
@@ -21,6 +22,14 @@ class TerminalResponse(BaseSchema):
     amenities: dict | None
     opening_time: time | None
     closing_time: time | None
+
+
+class TerminalBriefResponse(BaseSchema):
+    id: uuid.UUID
+    name: str
+    code: str
+    city: str
+    state: str
 
 
 class RouteStopResponse(BaseSchema):
@@ -49,3 +58,41 @@ class RouteResponse(BaseSchema):
 
 class RouteDetailResponse(RouteResponse):
     stops: list[RouteStopResponse] = []
+
+
+class RouteBriefResponse(BaseSchema):
+    id: uuid.UUID
+    name: str
+    code: str
+    origin_terminal: TerminalBriefResponse
+    destination_terminal: TerminalBriefResponse
+    distance_km: float | None
+    estimated_duration_minutes: int | None
+    base_price: float
+    currency: str
+
+
+class VehicleTypeBriefResponse(BaseSchema):
+    id: uuid.UUID
+    name: str
+    seat_capacity: int
+    amenities: dict | None
+
+
+class TripSearchResult(BaseSchema):
+    id: uuid.UUID
+    route: RouteBriefResponse
+    vehicle_type: VehicleTypeBriefResponse | None
+    departure_date: date
+    departure_time: time
+    status: TripStatus
+    price: float
+    currency: str = "NGN"
+    available_seats: int
+    total_seats: int
+    estimated_duration_minutes: int | None
+
+
+class PopularRouteResponse(BaseSchema):
+    route: RouteBriefResponse
+    booking_count: int

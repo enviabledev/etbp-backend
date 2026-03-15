@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime, time
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.constants import SeatStatus, TripStatus
 from app.schemas.common import BaseSchema
@@ -47,3 +47,20 @@ class TripDetailResponse(TripResponse):
     actual_departure_at: datetime | None
     actual_arrival_at: datetime | None
     notes: str | None
+
+
+class SeatMapResponse(BaseSchema):
+    trip_id: uuid.UUID
+    total_seats: int
+    available_seats: int
+    seats: list[TripSeatResponse]
+
+
+class LockSeatsRequest(BaseModel):
+    seat_ids: list[uuid.UUID] = Field(..., min_length=1, max_length=10)
+
+
+class LockSeatsResponse(BaseSchema):
+    locked_seats: list[uuid.UUID]
+    locked_until: datetime
+    message: str

@@ -5,37 +5,38 @@ from fastapi import APIRouter, Query
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.dependencies import DBSession
 from app.core.exceptions import NotFoundError
-from app.models.schedule import Trip, TripSeat
+from app.dependencies import DBSession
+from app.models.schedule import Trip
+from app.schemas.route import TripSearchResult
 from app.schemas.schedule import TripDetailResponse, TripResponse
+from app.services import route_service
 
-router = APIRouter(prefix="/schedules", tags=["Schedules"])
+router = APIRouter(prefix="/trips", tags=["Trips"])
 
 
-@router.get("/trips", response_model=list[TripResponse])
-async def search_trips(
+@router.get("", response_model=list[TripSearchResult])
+async def list_trips(
     db: DBSession,
-    route_id: uuid.UUID | None = None,
-    departure_date: date | None = None,
-    status: str | None = None,
+    route_id: uuid.UUID | None = Query(None, description="Filter by route"),
+    date: date | None = Query(None, description="Filter by departure date"),
+    passengers: int = Query(1, ge=1, le=10),
 ):
-    query = select(Trip)
-    if route_id:
-        query = query.where(Trip.route_id == route_id)
-    if departure_date:
-        query = query.where(Trip.departure_date == departure_date)
-    if status:
-        query = query.where(Trip.status == status)
-    query = query.where(Trip.available_seats > 0).order_by(
-        Trip.departure_date, Trip.departure_time
+    """List available trips for a route and date. Returns trips with route & vehicle details."""
+    return await route_service.search_available_trips(
+        db,
+        departure_date=date,
+        passengers=passengers,
+        # Build origin/destination filter from route_id if provided
+        origin=None,
+        destination=None,
+        route_id=route_id,
     )
-    result = await db.execute(query)
-    return result.scalars().all()
 
 
-@router.get("/trips/{trip_id}", response_model=TripDetailResponse)
+@router.get("/{trip_id}", response_model=TripDetailResponse)
 async def get_trip(trip_id: uuid.UUID, db: DBSession):
+    """Get trip details including all seat information."""
     result = await db.execute(
         select(Trip).options(selectinload(Trip.seats)).where(Trip.id == trip_id)
     )

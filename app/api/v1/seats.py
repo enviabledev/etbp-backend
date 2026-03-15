@@ -1,47 +1,30 @@
 import uuid
-from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter
-from sqlalchemy import select
 
-from app.core.constants import SeatStatus
-from app.core.exceptions import BadRequestError, NotFoundError
 from app.dependencies import CurrentUser, DBSession
-from app.models.schedule import TripSeat
-from app.schemas.common import MessageResponse
+from app.schemas.schedule import LockSeatsRequest, LockSeatsResponse, SeatMapResponse
+from app.services import schedule_service
 
-router = APIRouter(prefix="/seats", tags=["Seats"])
-
-LOCK_DURATION_MINUTES = 10
+router = APIRouter(prefix="/trips", tags=["Trips - Seats"])
 
 
-@router.post("/{seat_id}/lock", response_model=MessageResponse)
-async def lock_seat(seat_id: uuid.UUID, db: DBSession, current_user: CurrentUser):
-    result = await db.execute(select(TripSeat).where(TripSeat.id == seat_id))
-    seat = result.scalar_one_or_none()
-    if not seat:
-        raise NotFoundError("Seat not found")
-    if seat.status != SeatStatus.AVAILABLE:
-        raise BadRequestError("Seat is not available")
-
-    seat.status = SeatStatus.LOCKED
-    seat.locked_by_user_id = current_user.id
-    seat.locked_until = datetime.now(timezone.utc) + timedelta(minutes=LOCK_DURATION_MINUTES)
-    await db.flush()
-    return MessageResponse(message="Seat locked successfully")
+@router.get("/{trip_id}/seats", response_model=SeatMapResponse)
+async def get_seat_map(trip_id: uuid.UUID, db: DBSession):
+    """Get the seat map for a trip with real-time availability.
+    Automatically releases any expired seat locks."""
+    return await schedule_service.get_trip_seats(db, trip_id)
 
 
-@router.post("/{seat_id}/unlock", response_model=MessageResponse)
-async def unlock_seat(seat_id: uuid.UUID, db: DBSession, current_user: CurrentUser):
-    result = await db.execute(select(TripSeat).where(TripSeat.id == seat_id))
-    seat = result.scalar_one_or_none()
-    if not seat:
-        raise NotFoundError("Seat not found")
-    if seat.status != SeatStatus.LOCKED or seat.locked_by_user_id != current_user.id:
-        raise BadRequestError("You cannot unlock this seat")
-
-    seat.status = SeatStatus.AVAILABLE
-    seat.locked_by_user_id = None
-    seat.locked_until = None
-    await db.flush()
-    return MessageResponse(message="Seat unlocked successfully")
+@router.post("/{trip_id}/seats/lock", response_model=LockSeatsResponse)
+async def lock_seats(
+    trip_id: uuid.UUID,
+    data: LockSeatsRequest,
+    db: DBSession,
+    current_user: CurrentUser,
+):
+    """Lock selected seats for 5 minutes during checkout.
+    Returns 409 if any seats are already locked by another user or booked."""
+    return await schedule_service.lock_seats(
+        db, trip_id, data.seat_ids, current_user.id
+    )

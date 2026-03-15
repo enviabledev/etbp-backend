@@ -1,14 +1,51 @@
 import uuid
+from datetime import date
 
 from fastapi import APIRouter, Query
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from app.core.exceptions import NotFoundError
 from app.dependencies import DBSession
 from app.models.route import Route, Terminal
-from app.schemas.route import RouteDetailResponse, RouteResponse, TerminalResponse
+from app.schemas.route import (
+    PopularRouteResponse,
+    RouteDetailResponse,
+    RouteResponse,
+    TerminalBriefResponse,
+    TerminalResponse,
+    TripSearchResult,
+)
+from app.services import route_service
 
 router = APIRouter(prefix="/routes", tags=["Routes"])
+
+
+@router.get("/search", response_model=list[TripSearchResult])
+async def search_trips(
+    db: DBSession,
+    origin: str | None = Query(None, description="Origin city name or terminal code"),
+    destination: str | None = Query(None, description="Destination city name or terminal code"),
+    date: date | None = Query(None, alias="date", description="Departure date (YYYY-MM-DD)"),
+    passengers: int = Query(1, ge=1, le=10, description="Number of passengers"),
+):
+    """Search available trips by origin, destination, date, and passenger count."""
+    return await route_service.search_available_trips(
+        db,
+        origin=origin,
+        destination=destination,
+        departure_date=date,
+        passengers=passengers,
+    )
+
+
+@router.get("/popular", response_model=list[PopularRouteResponse])
+async def get_popular_routes(
+    db: DBSession,
+    limit: int = Query(10, ge=1, le=20),
+):
+    """Top routes by booking volume in the last 30 days."""
+    return await route_service.get_popular_routes(db, limit=limit)
 
 
 @router.get("/terminals", response_model=list[TerminalResponse])
@@ -43,21 +80,15 @@ async def list_routes(
         .where(Route.is_active == is_active)
     )
     if origin:
-        query = query.join(
-            Terminal, Route.origin_terminal_id == Terminal.id
-        ).where(
-            (Terminal.city.ilike(f"%{origin}%")) | (Terminal.code == origin.upper())
+        origin_ids = select(Terminal.id).where(
+            Terminal.city.ilike(f"%{origin}%") | (Terminal.code == origin.upper())
         )
+        query = query.where(Route.origin_terminal_id.in_(origin_ids))
     if destination:
-        dest_terminal = Terminal.__table__.alias("dest_t")
-        query = query.where(
-            Route.destination_terminal_id.in_(
-                select(Terminal.id).where(
-                    (Terminal.city.ilike(f"%{destination}%"))
-                    | (Terminal.code == destination.upper())
-                )
-            )
+        dest_ids = select(Terminal.id).where(
+            Terminal.city.ilike(f"%{destination}%") | (Terminal.code == destination.upper())
         )
+        query = query.where(Route.destination_terminal_id.in_(dest_ids))
     result = await db.execute(query.order_by(Route.name))
     return result.scalars().all()
 
@@ -75,6 +106,5 @@ async def get_route(route_id: uuid.UUID, db: DBSession):
     )
     route = result.scalar_one_or_none()
     if not route:
-        from app.core.exceptions import NotFoundError
         raise NotFoundError("Route not found")
     return route
