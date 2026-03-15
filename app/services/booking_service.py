@@ -198,6 +198,38 @@ async def cancel_booking(
 
     await db.flush()
 
+    # Send cancellation notifications
+    from app.services.notification_service import notify_booking_cancelled
+
+    primary = next(
+        (p for p in booking.passengers if p.is_primary),
+        booking.passengers[0] if booking.passengers else None,
+    )
+    name = f"{primary.first_name} {primary.last_name}" if primary else "Customer"
+
+    from app.models.route import Route
+    from sqlalchemy.orm import selectinload as _sel
+    trip_with_route = await db.execute(
+        select(Trip).options(_sel(Trip.route)).where(Trip.id == booking.trip_id)
+    )
+    trip_obj = trip_with_route.scalar_one()
+    route_name = trip_obj.route.name if trip_obj.route else "N/A"
+
+    await notify_booking_cancelled(
+        db,
+        user_id=booking.user_id,
+        booking_reference=booking.reference,
+        passenger_name=name,
+        email=booking.contact_email,
+        phone=booking.contact_phone,
+        route_name=route_name,
+        departure_date=trip.departure_date.strftime("%d %b %Y"),
+        reason=reason or "User request",
+        currency=booking.currency,
+        refund_amount=refund_amount,
+        refund_percentage=refund_pct,
+    )
+
     return {
         "id": booking.id,
         "reference": booking.reference,

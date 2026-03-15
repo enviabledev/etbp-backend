@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.core.constants import (
@@ -108,12 +109,67 @@ async def handle_paystack_webhook(
     payment.gateway_response = data
     payment.paid_at = datetime.now(timezone.utc)
 
+    from app.models.schedule import Trip as TripModel
+
     booking_result = await db.execute(
-        select(Booking).where(Booking.id == payment.booking_id)
+        select(Booking)
+        .options(
+            selectinload(Booking.passengers),
+            selectinload(Booking.user),
+            selectinload(Booking.trip).selectinload(TripModel.route),
+        )
+        .where(Booking.id == payment.booking_id)
     )
     booking = booking_result.scalar_one_or_none()
     if booking and booking.status == BookingStatus.PENDING:
         booking.status = BookingStatus.CONFIRMED
+
+        # Send notifications
+        from app.services.notification_service import (
+            notify_booking_confirmed,
+            notify_payment_received,
+        )
+
+        primary = next(
+            (p for p in booking.passengers if p.is_primary),
+            booking.passengers[0] if booking.passengers else None,
+        )
+        name = f"{primary.first_name} {primary.last_name}" if primary else "Customer"
+        seat_numbers = ", ".join(
+            p.qr_code_data.split("-")[1] if p.qr_code_data and "-" in p.qr_code_data else "?"
+            for p in booking.passengers
+        )
+        trip = booking.trip
+        route = trip.route if trip else None
+
+        await notify_booking_confirmed(
+            db,
+            user_id=booking.user_id,
+            booking_reference=booking.reference,
+            passenger_name=name,
+            email=booking.contact_email,
+            phone=booking.contact_phone,
+            route_name=route.name if route else "N/A",
+            departure_date=trip.departure_date.strftime("%d %b %Y") if trip else "N/A",
+            departure_time=trip.departure_time.strftime("%H:%M") if trip else "N/A",
+            seat_numbers=seat_numbers,
+            passenger_count=booking.passenger_count,
+            currency=booking.currency,
+            amount=f"{float(booking.total_amount):,.2f}",
+        )
+
+        await notify_payment_received(
+            db,
+            user_id=booking.user_id,
+            booking_reference=booking.reference,
+            passenger_name=name,
+            email=booking.contact_email,
+            currency=booking.currency,
+            amount=f"{float(payment.amount):,.2f}",
+            payment_method=payment.method,
+            payment_reference=payment.gateway_reference or str(payment.id),
+            payment_date=payment.paid_at.strftime("%d %b %Y %H:%M") if payment.paid_at else "N/A",
+        )
 
     await db.flush()
 

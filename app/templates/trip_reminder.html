@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><style>
+body { font-family: Arial, sans-serif; background: #f5f5f5; margin: 0; padding: 20px; }
+.container { max-width: 600px; margin: 0 auto; background: white; border-radius: 8px; overflow: hidden; }
+.header { background: #f57c00; color: white; padding: 24px; text-align: center; }
+.header h1 { margin: 0; font-size: 22px; }
+.body { padding: 24px; }
+.detail { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #eee; }
+.detail-label { color: #666; font-size: 14px; }
+.detail-value { font-weight: bold; font-size: 14px; }
+.alert { background: #fff8e1; border-left: 4px solid #f57c00; padding: 12px 16px; margin: 16px 0; border-radius: 0 6px 6px 0; }
+.footer { background: #f5f5f5; padding: 16px 24px; text-align: center; color: #999; font-size: 12px; }
+</style></head>
+<body>
+<div class="container">
+  <div class="header"><h1>Trip Reminder</h1></div>
+  <div class="body">
+    <p>Dear {{ passenger_name }},</p>
+    <p>This is a reminder that your trip is <strong>tomorrow</strong>!</p>
+    <div class="detail"><span class="detail-label">Booking</span><span class="detail-value">{{ booking_reference }}</span></div>
+    <div class="detail"><span class="detail-label">Route</span><span class="detail-value">{{ route_name }}</span></div>
+    <div class="detail"><span class="detail-label">Date</span><span class="detail-value">{{ departure_date }}</span></div>
+    <div class="detail"><span class="detail-label">Departure</span><span class="detail-value">{{ departure_time }}</span></div>
+    <div class="detail"><span class="detail-label">Terminal</span><span class="detail-value">{{ terminal_name }}</span></div>
+    <div class="detail"><span class="detail-label">Seats</span><span class="detail-value">{{ seat_numbers }}</span></div>
+    <div class="alert">
+      <strong>Important:</strong> Please arrive at the terminal at least 30 minutes before departure.
+      Have your booking reference or QR code ready for check-in.
+    </div>
+    <p>Have a safe trip!</p>
+  </div>
+  <div class="footer">Enviable Transport Booking Platform &mdash; {{ year }}</div>
+</div>
+</body>
+</html>

@@ -45,6 +45,12 @@ async def register_user(db: AsyncSession, data: RegisterRequest) -> UserResponse
     db.add(user)
     await db.flush()
     await db.refresh(user)
+
+    # Send welcome email via Celery
+    if user.email:
+        from app.tasks.email_tasks import send_welcome_email
+        send_welcome_email.delay(user.email, data.first_name)
+
     return UserResponse.model_validate(user)
 
 
