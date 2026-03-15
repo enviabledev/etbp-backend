@@ -65,3 +65,30 @@ class BookingDetailResponse(BookingResponse):
 
 class CancelBookingRequest(BaseModel):
     reason: str | None = None
+
+
+class CancelBookingResponse(BaseSchema):
+    id: uuid.UUID
+    reference: str
+    status: BookingStatus
+    cancellation_reason: str | None
+    cancelled_at: datetime | None
+    refund_amount: float | None
+    refund_percentage: int | None
+
+
+class RescheduleRequest(BaseModel):
+    new_trip_id: uuid.UUID
+    new_seat_ids: list[uuid.UUID] = Field(..., min_length=1)
+
+
+class ApplyPromoRequest(BaseModel):
+    promo_code: str = Field(..., max_length=50)
+
+
+class ApplyPromoResponse(BaseSchema):
+    booking_reference: str
+    original_amount: float
+    discount_amount: float
+    new_total: float
+    promo_code: str

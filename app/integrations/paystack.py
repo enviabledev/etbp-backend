@@ -19,6 +19,7 @@ class PaystackClient:
         amount: int,
         reference: str,
         callback_url: str | None = None,
+        metadata: dict | None = None,
     ) -> dict:
         payload: dict = {
             "email": email,
@@ -28,6 +29,8 @@ class PaystackClient:
         }
         if callback_url:
             payload["callback_url"] = callback_url
+        if metadata:
+            payload["metadata"] = metadata
 
         async with httpx.AsyncClient() as client:
             response = await client.post(

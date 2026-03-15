@@ -1,6 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Query
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -9,12 +10,16 @@ from app.core.exceptions import ForbiddenError, NotFoundError
 from app.dependencies import CurrentUser, DBSession
 from app.models.booking import Booking
 from app.schemas.booking import (
+    ApplyPromoRequest,
+    ApplyPromoResponse,
     BookingDetailResponse,
     BookingResponse,
     CancelBookingRequest,
+    CancelBookingResponse,
     CreateBookingRequest,
+    RescheduleRequest,
 )
-from app.services import booking_service
+from app.services import booking_service, ticket_service
 
 router = APIRouter(prefix="/bookings", tags=["Bookings"])
 
@@ -33,58 +38,89 @@ async def list_my_bookings(
     db: DBSession,
     current_user: CurrentUser,
     status: BookingStatus | None = None,
+    upcoming: bool | None = Query(None, description="True=upcoming, False=past"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ):
+    from datetime import date
+
     query = (
         select(Booking)
         .where(Booking.user_id == current_user.id)
-        .order_by(Booking.created_at.desc())
     )
     if status:
         query = query.where(Booking.status == status.value)
-    query = query.offset((page - 1) * page_size).limit(page_size)
+    if upcoming is True:
+        from app.models.schedule import Trip
+        query = query.join(Trip, Booking.trip_id == Trip.id).where(
+            Trip.departure_date >= date.today()
+        )
+    elif upcoming is False:
+        from app.models.schedule import Trip
+        query = query.join(Trip, Booking.trip_id == Trip.id).where(
+            Trip.departure_date < date.today()
+        )
+    query = query.order_by(Booking.created_at.desc()).offset(
+        (page - 1) * page_size
+    ).limit(page_size)
     result = await db.execute(query)
     return result.scalars().all()
 
 
-@router.get("/{booking_id}", response_model=BookingDetailResponse)
-async def get_booking(booking_id: uuid.UUID, db: DBSession, current_user: CurrentUser):
-    result = await db.execute(
-        select(Booking)
-        .options(selectinload(Booking.passengers))
-        .where(Booking.id == booking_id)
-    )
-    booking = result.scalar_one_or_none()
-    if not booking:
-        raise NotFoundError("Booking not found")
-    if booking.user_id != current_user.id:
-        raise ForbiddenError("Access denied")
-    return booking
-
-
-@router.get("/reference/{reference}", response_model=BookingDetailResponse)
+@router.get("/{reference}", response_model=BookingDetailResponse)
 async def get_booking_by_reference(
     reference: str, db: DBSession, current_user: CurrentUser
 ):
-    result = await db.execute(
-        select(Booking)
-        .options(selectinload(Booking.passengers))
-        .where(Booking.reference == reference.upper())
-    )
-    booking = result.scalar_one_or_none()
-    if not booking:
-        raise NotFoundError("Booking not found")
-    if booking.user_id != current_user.id:
-        raise ForbiddenError("Access denied")
-    return booking
+    return await booking_service.get_booking_by_reference(db, reference, current_user.id)
 
 
-@router.post("/{booking_id}/cancel", response_model=BookingResponse)
+@router.put("/{reference}/cancel", response_model=CancelBookingResponse)
 async def cancel_booking(
-    booking_id: uuid.UUID,
+    reference: str,
     data: CancelBookingRequest,
     db: DBSession,
     current_user: CurrentUser,
 ):
-    return await booking_service.cancel_booking(db, current_user.id, booking_id, data.reason)
+    return await booking_service.cancel_booking(
+        db, current_user.id, reference, data.reason
+    )
+
+
+@router.put("/{reference}/reschedule", response_model=BookingDetailResponse)
+async def reschedule_booking(
+    reference: str,
+    data: RescheduleRequest,
+    db: DBSession,
+    current_user: CurrentUser,
+):
+    return await booking_service.reschedule_booking(
+        db, current_user.id, reference, data.new_trip_id, data.new_seat_ids
+    )
+
+
+@router.get("/{reference}/ticket")
+async def download_eticket(
+    reference: str, db: DBSession, current_user: CurrentUser
+):
+    pdf_bytes = await ticket_service.generate_eticket_pdf(
+        db, reference, current_user.id
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="ticket-{reference}.pdf"'
+        },
+    )
+
+
+@router.post("/{reference}/apply-promo", response_model=ApplyPromoResponse)
+async def apply_promo(
+    reference: str,
+    data: ApplyPromoRequest,
+    db: DBSession,
+    current_user: CurrentUser,
+):
+    return await booking_service.apply_promo_code(
+        db, current_user.id, reference, data.promo_code
+    )
