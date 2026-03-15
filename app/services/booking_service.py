@@ -19,6 +19,7 @@ async def create_booking(
     user_id: uuid.UUID,
     data: CreateBookingRequest,
     booked_by: uuid.UUID | None = None,
+    skip_lock_check: bool = False,
 ) -> BookingDetailResponse:
     trip_result = await db.execute(select(Trip).where(Trip.id == data.trip_id))
     trip = trip_result.scalar_one_or_none()
@@ -29,7 +30,6 @@ async def create_booking(
     if trip.available_seats < len(data.passengers):
         raise BadRequestError("Not enough seats available")
 
-    # Verify all seats are locked by this user
     seat_ids = [p.seat_id for p in data.passengers]
     seats_result = await db.execute(
         select(TripSeat).where(
@@ -44,12 +44,17 @@ async def create_booking(
     for seat in seats.values():
         if seat.status == SeatStatus.BOOKED:
             raise BadRequestError(f"Seat {seat.seat_number} is already booked")
-        if seat.status == SeatStatus.LOCKED and seat.locked_by_user_id != user_id:
-            raise BadRequestError(f"Seat {seat.seat_number} is locked by another user")
-        if seat.status == SeatStatus.AVAILABLE:
-            raise BadRequestError(
-                f"Seat {seat.seat_number} is not locked. Lock seats before booking."
-            )
+        if not skip_lock_check:
+            if seat.status == SeatStatus.LOCKED and seat.locked_by_user_id != user_id:
+                raise BadRequestError(f"Seat {seat.seat_number} is locked by another user")
+            if seat.status == SeatStatus.AVAILABLE:
+                raise BadRequestError(
+                    f"Seat {seat.seat_number} is not locked. Lock seats before booking."
+                )
+        else:
+            # Agent flow: seat must be available or locked by this agent
+            if seat.status == SeatStatus.LOCKED and seat.locked_by_user_id != booked_by:
+                raise BadRequestError(f"Seat {seat.seat_number} is locked by another user")
 
     # Generate unique reference with collision check
     for _ in range(10):
