@@ -82,6 +82,29 @@ async def get_dashboard_stats(db: AsyncSession) -> dict:
         )
     ).scalar() or 0
 
+    # Occupancy: avg across today's trips
+    occupancy_result = await db.execute(
+        select(
+            func.coalesce(func.sum(Trip.total_seats), 0).label("total"),
+            func.coalesce(func.sum(Trip.total_seats - Trip.available_seats), 0).label("booked"),
+        ).where(
+            Trip.departure_date == today,
+            Trip.status.in_(["scheduled", "boarding", "departed", "en_route"]),
+        )
+    )
+    occ = occupancy_result.one()
+    occupancy_rate = round(float(occ.booked) / float(occ.total) * 100, 1) if occ.total > 0 else 0.0
+
+    # Passenger count today
+    passengers_today = (
+        await db.execute(
+            select(func.coalesce(func.sum(Booking.passenger_count), 0)).where(
+                func.date(Booking.created_at) == today,
+                Booking.status.notin_(["cancelled", "expired"]),
+            )
+        )
+    ).scalar() or 0
+
     return {
         "users": {
             "total": total_users,
@@ -100,7 +123,9 @@ async def get_dashboard_stats(db: AsyncSession) -> dict:
         },
         "trips": {
             "active": active_trips,
+            "occupancy_rate_today": occupancy_rate,
         },
+        "passengers_today": int(passengers_today),
     }
 
 
@@ -181,6 +206,51 @@ async def get_revenue_by_route(
             "route_id": str(row.id),
             "route_name": row.name,
             "route_code": row.code,
+            "revenue": float(row.revenue),
+            "booking_count": row.booking_count,
+        }
+        for row in result.all()
+    ]
+
+
+async def get_revenue_by_terminal(
+    db: AsyncSession,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    limit: int = 20,
+) -> list[dict]:
+    query = (
+        select(
+            Terminal.id,
+            Terminal.name,
+            Terminal.code,
+            Terminal.city,
+            func.sum(Payment.amount).label("revenue"),
+            func.count(Booking.id).label("booking_count"),
+        )
+        .join(Booking, Payment.booking_id == Booking.id)
+        .join(Trip, Booking.trip_id == Trip.id)
+        .join(Route, Trip.route_id == Route.id)
+        .join(Terminal, Route.origin_terminal_id == Terminal.id)
+        .where(Payment.status == "successful")
+    )
+    if from_date:
+        query = query.where(func.date(Payment.paid_at) >= from_date)
+    if to_date:
+        query = query.where(func.date(Payment.paid_at) <= to_date)
+
+    query = (
+        query.group_by(Terminal.id, Terminal.name, Terminal.code, Terminal.city)
+        .order_by(func.sum(Payment.amount).desc())
+        .limit(limit)
+    )
+    result = await db.execute(query)
+    return [
+        {
+            "terminal_id": str(row.id),
+            "terminal_name": row.name,
+            "terminal_code": row.code,
+            "city": row.city,
             "revenue": float(row.revenue),
             "booking_count": row.booking_count,
         }

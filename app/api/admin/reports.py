@@ -50,6 +50,19 @@ async def revenue_by_route(
     )
 
 
+@router.get("/revenue-by-terminal", dependencies=[AdminUser])
+async def revenue_by_terminal(
+    db: DBSession,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    limit: int = Query(20, ge=1, le=50),
+):
+    """Revenue breakdown per origin terminal."""
+    return await analytics_service.get_revenue_by_terminal(
+        db, from_date=from_date, to_date=to_date, limit=limit
+    )
+
+
 @router.get("/occupancy", dependencies=[AdminUser])
 async def occupancy_report(
     db: DBSession,

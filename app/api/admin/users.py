@@ -132,3 +132,28 @@ async def activate_user(user_id: uuid.UUID, db: DBSession):
     user.is_active = True
     await db.flush()
     return {"id": str(user.id), "is_active": True}
+
+
+@router.put("/{user_id}/role", dependencies=[AdminUser])
+async def change_user_role(
+    user_id: uuid.UUID,
+    role: UserRole,
+    db: DBSession,
+):
+    """Change a user's role. Only super_admin can promote to admin/super_admin."""
+    from app.core.permissions import ADMIN_ROLES
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise NotFoundError("User not found")
+
+    old_role = user.role
+    user.role = role.value
+    await db.flush()
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "old_role": old_role,
+        "new_role": user.role,
+    }

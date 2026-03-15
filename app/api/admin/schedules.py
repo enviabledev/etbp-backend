@@ -1,5 +1,5 @@
 import uuid
-from datetime import date, time
+from datetime import date, time, timedelta
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
@@ -9,7 +9,9 @@ from sqlalchemy.orm import selectinload
 from app.core.constants import TripStatus, UserRole
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.dependencies import DBSession, require_role
+from app.models.route import Route
 from app.models.schedule import Schedule, Trip, TripSeat
+from app.models.vehicle import VehicleType
 
 router = APIRouter(prefix="/schedules", tags=["Admin - Schedules"])
 
@@ -225,4 +227,135 @@ async def assign_vehicle_driver(trip_id: uuid.UUID, data: AssignTripRequest, db:
         "trip_id": str(trip.id),
         "vehicle_id": str(trip.vehicle_id) if trip.vehicle_id else None,
         "driver_id": str(trip.driver_id) if trip.driver_id else None,
+    }
+
+
+# ── Bulk Trip Generation ──
+
+
+class GenerateTripsRequest(BaseModel):
+    schedule_id: uuid.UUID
+    from_date: date
+    to_date: date
+
+
+def _generate_seats_from_layout(trip_id: uuid.UUID, vehicle_type: VehicleType) -> list[TripSeat]:
+    """Generate TripSeat objects from a vehicle type's seat_layout."""
+    layout = vehicle_type.seat_layout or {}
+    columns = layout.get("columns", 4)
+    skip_cols = set(layout.get("skip", []))
+    capacity = vehicle_type.seat_capacity
+
+    seats = []
+    seat_num = 0
+    row = 1
+    while seat_num < capacity:
+        for col in range(1, columns + 1):
+            if col in skip_cols:
+                continue
+            seat_num += 1
+            if seat_num > capacity:
+                break
+
+            if col == 1 or col == columns:
+                seat_type = "window"
+            else:
+                seat_type = "aisle"
+
+            seats.append(TripSeat(
+                trip_id=trip_id,
+                seat_number=f"{chr(64 + row)}{col}",
+                seat_row=row,
+                seat_column=col,
+                seat_type=seat_type,
+            ))
+        row += 1
+
+    return seats
+
+
+@router.post("/trips/generate", status_code=201, dependencies=[AdminUser])
+async def generate_trips_from_schedule(data: GenerateTripsRequest, db: DBSession):
+    """Generate trips for a schedule over a date range, with seat maps from vehicle type layout."""
+    schedule_result = await db.execute(
+        select(Schedule)
+        .options(selectinload(Schedule.vehicle_type), selectinload(Schedule.route))
+        .where(Schedule.id == data.schedule_id)
+    )
+    schedule = schedule_result.scalar_one_or_none()
+    if not schedule:
+        raise NotFoundError("Schedule not found")
+    if not schedule.is_active:
+        raise BadRequestError("Schedule is not active")
+
+    if data.from_date > data.to_date:
+        raise BadRequestError("from_date must be before to_date")
+    if (data.to_date - data.from_date).days > 90:
+        raise BadRequestError("Cannot generate more than 90 days of trips at once")
+
+    vehicle_type = schedule.vehicle_type
+    route = schedule.route
+    price = float(schedule.price_override) if schedule.price_override else float(route.base_price)
+
+    # Parse recurrence
+    recurrence = (schedule.recurrence or "daily").lower()
+    if recurrence == "daily":
+        valid_days = set(range(7))
+    else:
+        day_map = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+        valid_days = set()
+        for part in recurrence.split(","):
+            part = part.strip().lower()[:3]
+            if part in day_map:
+                valid_days.add(day_map[part])
+
+    created = 0
+    skipped = 0
+    current = data.from_date
+    while current <= data.to_date:
+        if current.weekday() not in valid_days:
+            current += timedelta(days=1)
+            continue
+
+        # Check if trip already exists for this schedule + date
+        existing = await db.execute(
+            select(Trip.id).where(
+                Trip.schedule_id == schedule.id,
+                Trip.departure_date == current,
+            )
+        )
+        if existing.scalar_one_or_none():
+            skipped += 1
+            current += timedelta(days=1)
+            continue
+
+        trip = Trip(
+            schedule_id=schedule.id,
+            route_id=schedule.route_id,
+            departure_date=current,
+            departure_time=schedule.departure_time,
+            price=price,
+            total_seats=vehicle_type.seat_capacity,
+            available_seats=vehicle_type.seat_capacity,
+        )
+        db.add(trip)
+        await db.flush()
+
+        seats = _generate_seats_from_layout(trip.id, vehicle_type)
+        for seat in seats:
+            db.add(seat)
+
+        created += 1
+        current += timedelta(days=1)
+
+    await db.flush()
+
+    return {
+        "schedule_id": str(schedule.id),
+        "route": route.name,
+        "from_date": str(data.from_date),
+        "to_date": str(data.to_date),
+        "trips_created": created,
+        "trips_skipped": skipped,
+        "seats_per_trip": vehicle_type.seat_capacity,
     }
