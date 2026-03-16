@@ -130,7 +130,7 @@ async def create_trip(data: CreateTripRequest, db: DBSession):
             seat_type = "window" if col in (1, 4) else "aisle"
             seat = TripSeat(
                 trip_id=trip.id,
-                seat_number=f"{chr(64 + row)}{col}",
+                seat_number=str(i),
                 seat_row=row,
                 seat_column=col,
                 seat_type=seat_type,
@@ -281,7 +281,7 @@ def _generate_seats_from_layout(trip_id: uuid.UUID, vehicle_type: VehicleType) -
 
             seats.append(TripSeat(
                 trip_id=trip_id,
-                seat_number=f"{chr(64 + row)}{col}",
+                seat_number=str(seat_num),
                 seat_row=row,
                 seat_column=col,
                 seat_type=seat_type,
