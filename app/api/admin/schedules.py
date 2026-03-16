@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from app.core.constants import TripStatus, UserRole
-from app.core.exceptions import BadRequestError, NotFoundError
+from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.dependencies import DBSession, require_role
 from app.models.route import Route
 from app.models.schedule import Schedule, Trip, TripSeat
@@ -218,10 +218,27 @@ async def assign_vehicle_driver(trip_id: uuid.UUID, data: AssignTripRequest, db:
     trip = result.scalar_one_or_none()
     if not trip:
         raise NotFoundError("Trip not found")
+
+    # Driver conflict check: same driver on another trip at same date+time
+    if data.driver_id is not None:
+        conflict = await db.execute(
+            select(Trip).where(
+                Trip.driver_id == data.driver_id,
+                Trip.departure_date == trip.departure_date,
+                Trip.departure_time == trip.departure_time,
+                Trip.id != trip_id,
+                Trip.status.notin_(["cancelled", "arrived"]),
+            )
+        )
+        if conflict.scalar_one_or_none():
+            raise ConflictError(
+                "Driver is already assigned to another trip at the same date and time"
+            )
+        trip.driver_id = data.driver_id
+
     if data.vehicle_id is not None:
         trip.vehicle_id = data.vehicle_id
-    if data.driver_id is not None:
-        trip.driver_id = data.driver_id
+
     await db.flush()
     return {
         "trip_id": str(trip.id),
