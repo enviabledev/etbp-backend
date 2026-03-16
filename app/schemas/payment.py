@@ -8,7 +8,7 @@ from app.schemas.common import BaseSchema
 
 
 class InitiatePaymentRequest(BaseModel):
-    booking_id: uuid.UUID
+    booking_reference: str
     method: PaymentMethod
     callback_url: str | None = None
 
@@ -61,7 +61,7 @@ class WalletTopupResponse(BaseSchema):
 
 
 class WalletPaymentRequest(BaseModel):
-    booking_id: uuid.UUID
+    booking_reference: str
 
 
 class WalletPaymentResponse(BaseSchema):

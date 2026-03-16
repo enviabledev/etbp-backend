@@ -58,7 +58,7 @@ async def pay_with_wallet(
     db: DBSession,
     current_user: CurrentUser,
 ):
-    return await payment_service.pay_with_wallet(db, current_user.id, data.booking_id)
+    return await payment_service.pay_with_wallet(db, current_user.id, data.booking_reference)
 
 
 # ── Wallet ──

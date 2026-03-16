@@ -37,7 +37,7 @@ async def initiate_payment(
     paystack_client: PaystackClient | None = None,
 ) -> dict:
     booking_result = await db.execute(
-        select(Booking).where(Booking.id == data.booking_id, Booking.user_id == user_id)
+        select(Booking).where(Booking.reference == data.booking_reference, Booking.user_id == user_id)
     )
     booking = booking_result.scalar_one_or_none()
     if not booking:
@@ -263,10 +263,10 @@ async def process_wallet_topup(
 
 
 async def pay_with_wallet(
-    db: AsyncSession, user_id: uuid.UUID, booking_id: uuid.UUID
+    db: AsyncSession, user_id: uuid.UUID, booking_reference: str
 ) -> dict:
     booking_result = await db.execute(
-        select(Booking).where(Booking.id == booking_id, Booking.user_id == user_id)
+        select(Booking).where(Booking.reference == booking_reference, Booking.user_id == user_id)
     )
     booking = booking_result.scalar_one_or_none()
     if not booking:

@@ -20,7 +20,7 @@ from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse
 from app.schemas.user import UserResponse, UserUpdateRequest
 
 
-async def register_user(db: AsyncSession, data: RegisterRequest) -> UserResponse:
+async def register_user(db: AsyncSession, data: RegisterRequest) -> TokenResponse:
     existing = await db.execute(
         select(User).where(User.email == data.email.lower())
     )
@@ -51,7 +51,20 @@ async def register_user(db: AsyncSession, data: RegisterRequest) -> UserResponse
         from app.tasks.email_tasks import send_welcome_email
         send_welcome_email.delay(user.email, data.first_name)
 
-    return UserResponse.model_validate(user)
+    # Create tokens (auto-login after registration)
+    token_data = {"sub": str(user.id), "role": user.role}
+    access_token = create_access_token(token_data)
+    refresh_token = create_refresh_token(token_data)
+
+    rt = RefreshToken(
+        user_id=user.id,
+        token_hash=hash_token(refresh_token),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expire_days),
+    )
+    db.add(rt)
+    await db.flush()
+
+    return TokenResponse(access_token=access_token, refresh_token=refresh_token)
 
 
 async def login_user(db: AsyncSession, data: LoginRequest) -> TokenResponse:
