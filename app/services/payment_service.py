@@ -24,7 +24,8 @@ from app.schemas.payment import InitiatePaymentRequest
 async def verify_payment_by_reference(
     db: AsyncSession, user_id: uuid.UUID, reference: str
 ) -> Payment:
-    """Look up a payment by gateway_reference (Paystack reference) or payment ID."""
+    """Look up a payment by gateway_reference or payment ID.
+    If still pending, verify with Paystack and update status."""
     result = await db.execute(
         select(Payment).where(
             Payment.gateway_reference == reference,
@@ -44,6 +45,37 @@ async def verify_payment_by_reference(
             pass
     if not payment:
         raise NotFoundError("Payment not found")
+
+    # If still pending, verify with Paystack
+    if payment.status == PaymentStatus.PENDING and payment.gateway == "paystack":
+        try:
+            client = PaystackClient()
+            paystack_data = await client.verify_transaction(
+                payment.gateway_reference or str(payment.id)
+            )
+            paystack_status = paystack_data.get("status")
+            if paystack_status == "success":
+                payment.status = PaymentStatus.SUCCESSFUL
+                payment.gateway_response = paystack_data
+                payment.paid_at = datetime.now(timezone.utc)
+
+                # Also confirm the booking
+                if payment.booking_id:
+                    booking_result = await db.execute(
+                        select(Booking).where(Booking.id == payment.booking_id)
+                    )
+                    booking = booking_result.scalar_one_or_none()
+                    if booking and booking.status == BookingStatus.PENDING:
+                        booking.status = BookingStatus.CONFIRMED
+
+                await db.flush()
+            elif paystack_status == "failed":
+                payment.status = PaymentStatus.FAILED
+                payment.gateway_response = paystack_data
+                await db.flush()
+        except Exception:
+            pass  # If Paystack API fails, return current status
+
     return payment
 
 
@@ -86,6 +118,16 @@ async def initiate_payment(
     if booking.status != BookingStatus.PENDING:
         raise BadRequestError("Booking is not in pending status")
 
+    # Resolve email — Paystack rejects empty strings
+    from app.models.user import User
+    email = booking.contact_email
+    if not email:
+        user_result = await db.execute(select(User).where(User.id == user_id))
+        user = user_result.scalar_one()
+        email = user.email or ""
+    if not email:
+        raise BadRequestError("Email required for card payment. Please update your profile.")
+
     payment = Payment(
         booking_id=booking.id,
         user_id=user_id,
@@ -98,7 +140,7 @@ async def initiate_payment(
 
     client = paystack_client or PaystackClient()
     result = await client.initialize_transaction(
-        email=booking.contact_email or "",
+        email=email,
         amount=int(float(booking.total_amount) * 100),  # kobo
         reference=str(payment.id),
         callback_url=data.callback_url,
