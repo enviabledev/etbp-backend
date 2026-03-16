@@ -124,6 +124,15 @@ async def list_terminals(
     return {"items": result.scalars().all(), "total": total, "page": page, "page_size": page_size}
 
 
+@router.get("/terminals/{terminal_id}", dependencies=[AdminUser])
+async def get_terminal(terminal_id: uuid.UUID, db: DBSession):
+    result = await db.execute(select(Terminal).where(Terminal.id == terminal_id))
+    terminal = result.scalar_one_or_none()
+    if not terminal:
+        raise NotFoundError("Terminal not found")
+    return terminal
+
+
 @router.put("/terminals/{terminal_id}", dependencies=[AdminUser])
 async def update_terminal(terminal_id: uuid.UUID, data: UpdateTerminalRequest, db: DBSession):
     result = await db.execute(select(Terminal).where(Terminal.id == terminal_id))
