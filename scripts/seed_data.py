@@ -215,33 +215,32 @@ async def seed():
             email_verified=True, phone_verified=True, is_active=True,
             phone="+2348000000001",
         )
+        # Agents — assigned to terminals
         agent1 = User(
-            email="agent1@enviabletransport.com",
+            email="agent.jibowu@enviabletransport.com",
             password_hash=hash_password("Agent123!"),
             first_name="Blessing", last_name="Okonkwo",
-            role=UserRole.AGENT,
-            email_verified=True, is_active=True,
+            role=UserRole.AGENT, email_verified=True, is_active=True,
             phone="+2348000000002",
         )
         agent2 = User(
-            email="agent2@enviabletransport.com",
+            email="agent.abuja@enviabletransport.com",
             password_hash=hash_password("Agent123!"),
             first_name="Chidi", last_name="Eze",
-            role=UserRole.AGENT,
-            email_verified=True, is_active=True,
+            role=UserRole.AGENT, email_verified=True, is_active=True,
             phone="+2348000000003",
         )
         db.add_all([admin, agent1, agent2])
         await db.flush()
 
-        # Driver users
+        # Drivers — with profiles and terminal assignments
         driver_data = [
-            ("Tunde", "Bakare", "tunde@enviabletransport.com", "+2348200000001", "DRV-001-LAG", "B"),
-            ("Ibrahim", "Musa", "ibrahim@enviabletransport.com", "+2348200000002", "DRV-002-ABJ", "C"),
-            ("Obinna", "Agu", "obinna@enviabletransport.com", "+2348200000003", "DRV-003-BEN", "B"),
+            ("Chukwu", "Obi", "chukwu@enviabletransport.com", "+2348200000001", "DRV-001-LAG", "C", "LAG-JBW"),
+            ("Emeka", "Nwosu", "emeka.driver@enviabletransport.com", "+2348200000002", "DRV-002-ABJ", "C", "ABJ"),
+            ("Funmi", "Adeyemi", "funmi@enviabletransport.com", "+2348200000003", "DRV-003-BEN", "B", "BEN"),
         ]
         drivers = []
-        for fname, lname, email, phone, license_no, license_class in driver_data:
+        for fname, lname, email, phone, license_no, license_class, terminal_code in driver_data:
             u = User(
                 email=email, password_hash=hash_password("Driver123!"),
                 first_name=fname, last_name=lname,
@@ -256,9 +255,11 @@ async def seed():
                 license_expiry=date.today() + timedelta(days=random.randint(180, 730)),
                 license_class=license_class,
                 years_experience=random.randint(3, 15),
+                medical_check_expiry=date.today() + timedelta(days=random.randint(30, 365)),
                 rating_avg=round(random.uniform(3.5, 5.0), 1),
                 total_trips=random.randint(50, 500),
                 is_available=True,
+                assigned_terminal_id=terminals[terminal_code].id,
             )
             db.add(d)
             drivers.append(d)
@@ -351,11 +352,11 @@ async def seed():
         print()
         print("Login credentials:")
         print(f"  Admin:   admin@enviabletransport.com / Admin123!")
-        print(f"  Agent1:  agent1@enviabletransport.com / Agent123!")
-        print(f"  Agent2:  agent2@enviabletransport.com / Agent123!")
-        print(f"  Driver1: tunde@enviabletransport.com / Driver123!")
-        print(f"  Driver2: ibrahim@enviabletransport.com / Driver123!")
-        print(f"  Driver3: obinna@enviabletransport.com / Driver123!")
+        print(f"  Agent1:  agent.jibowu@enviabletransport.com / Agent123!")
+        print(f"  Agent2:  agent.abuja@enviabletransport.com / Agent123!")
+        print(f"  Driver1: chukwu@enviabletransport.com / Driver123!")
+        print(f"  Driver2: emeka.driver@enviabletransport.com / Driver123!")
+        print(f"  Driver3: funmi@enviabletransport.com / Driver123!")
         print(f"  Passengers: adaeze@gmail.com (etc.) / Pass123!")
 
 

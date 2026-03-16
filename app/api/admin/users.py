@@ -7,6 +7,7 @@ from app.core.constants import UserRole
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.dependencies import DBSession, require_role
 from app.models.booking import Booking
+from app.models.driver import Driver
 from app.models.payment import Payment, Wallet
 from app.models.user import User
 from app.schemas.user import AdminUserUpdateRequest, UserResponse
@@ -52,6 +53,58 @@ async def list_users(
         "total": total,
         "page": page,
         "page_size": page_size,
+    }
+
+
+@router.get("/customers", dependencies=[AdminUser])
+async def list_customers(
+    db: DBSession, search: str | None = None,
+    page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+):
+    query = select(
+        User,
+        func.count(Booking.id).label("booking_count"),
+        func.max(Booking.created_at).label("last_booking"),
+    ).outerjoin(Booking, Booking.user_id == User.id).where(
+        User.role == UserRole.PASSENGER
+    ).group_by(User.id)
+    if search:
+        p = f"%{search}%"
+        query = query.where(User.first_name.ilike(p) | User.last_name.ilike(p) | User.email.ilike(p) | User.phone.ilike(p))
+
+    count_q = select(func.count()).select_from(
+        select(User.id).where(User.role == UserRole.PASSENGER).subquery()
+    )
+    total = (await db.execute(count_q)).scalar() or 0
+
+    query = query.order_by(User.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+    result = await db.execute(query)
+    items = []
+    for user, bc, lb in result.all():
+        items.append({
+            **UserResponse.model_validate(user).model_dump(),
+            "booking_count": bc, "last_booking": str(lb) if lb else None,
+        })
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+@router.get("/admins", dependencies=[AdminUser])
+async def list_admin_users(
+    db: DBSession, search: str | None = None,
+    page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+):
+    admin_roles = [UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.FLEET_MANAGER]
+    query = select(User).where(User.role.in_([r.value for r in admin_roles]))
+    if search:
+        p = f"%{search}%"
+        query = query.where(User.first_name.ilike(p) | User.last_name.ilike(p) | User.email.ilike(p))
+    count_result = await db.execute(select(func.count()).select_from(query.subquery()))
+    total = count_result.scalar()
+    query = query.order_by(User.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+    result = await db.execute(query)
+    return {
+        "items": [UserResponse.model_validate(u) for u in result.scalars().all()],
+        "total": total, "page": page, "page_size": page_size,
     }
 
 
