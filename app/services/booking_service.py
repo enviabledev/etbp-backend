@@ -112,11 +112,19 @@ async def create_booking(
     trip.available_seats -= len(data.passengers)
     await db.flush()
 
+    from app.models.route import Route
+
     result = await db.execute(
         select(Booking)
         .options(
             selectinload(Booking.passengers).selectinload(BookingPassenger.seat),
-            selectinload(Booking.trip).selectinload(Trip.route),
+            selectinload(Booking.trip)
+            .selectinload(Trip.route)
+            .selectinload(Route.origin_terminal),
+            selectinload(Booking.trip)
+            .selectinload(Trip.route)
+            .selectinload(Route.destination_terminal),
+            selectinload(Booking.payments),
         )
         .where(Booking.id == booking.id)
     )

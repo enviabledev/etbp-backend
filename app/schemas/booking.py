@@ -2,6 +2,7 @@ import uuid
 from datetime import date, datetime, time
 
 from pydantic import BaseModel, EmailStr, Field, model_validator
+from sqlalchemy import inspect as sa_inspect
 
 from app.core.constants import BookingStatus, GenderType
 from app.schemas.common import BaseSchema
@@ -44,7 +45,10 @@ class BookingPassengerResponse(BaseSchema):
     @classmethod
     def extract_seat_info(cls, data: object) -> object:
         """Extract seat_number from the related seat object if present."""
-        if hasattr(data, "seat") and data.seat:
+        if not hasattr(data, "__table__"):
+            return data
+        state = sa_inspect(data)
+        if "seat" not in state.unloaded and hasattr(data, "seat") and data.seat:
             if not getattr(data, "seat_number", None):
                 data.seat_number = data.seat.seat_number  # type: ignore[union-attr]
             if not getattr(data, "seat_type", None):
@@ -119,11 +123,21 @@ class BookingDetailResponse(BookingResponse):
     @model_validator(mode="before")
     @classmethod
     def extract_payment_info(cls, data: object) -> object:
-        """Extract payment_method from the related payments if present."""
-        if hasattr(data, "payments") and data.payments:
+        """Extract payment_method from related payments, trip, passengers — only if loaded."""
+        if not hasattr(data, "__table__"):
+            return data
+        state = sa_inspect(data)
+        # payments
+        if "payments" not in state.unloaded and hasattr(data, "payments") and data.payments:
             successful = [p for p in data.payments if p.status in ("successful", "completed")]
             if successful:
                 data.payment_method = successful[0].method  # type: ignore[union-attr]
+        # trip — set to None if not loaded to prevent lazy load
+        if "trip" in state.unloaded:
+            data.trip = None  # type: ignore[union-attr]
+        # passengers — set to empty list if not loaded
+        if "passengers" in state.unloaded:
+            data.passengers = []  # type: ignore[union-attr]
         return data
 
 
