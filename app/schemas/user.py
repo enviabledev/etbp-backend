@@ -17,6 +17,8 @@ class UserResponse(BaseSchema):
     avatar_url: str | None
     date_of_birth: date | None
     gender: GenderType | None
+    emergency_contact_name: str | None = None
+    emergency_contact_phone: str | None = None
     email_verified: bool
     phone_verified: bool
     is_active: bool
