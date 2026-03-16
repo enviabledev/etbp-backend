@@ -21,6 +21,47 @@ from app.models.payment import Payment, Wallet, WalletTransaction
 from app.schemas.payment import InitiatePaymentRequest
 
 
+async def verify_payment_by_reference(
+    db: AsyncSession, user_id: uuid.UUID, reference: str
+) -> Payment:
+    """Look up a payment by gateway_reference (Paystack reference) or payment ID."""
+    result = await db.execute(
+        select(Payment).where(
+            Payment.gateway_reference == reference,
+            Payment.user_id == user_id,
+        )
+    )
+    payment = result.scalar_one_or_none()
+    if not payment:
+        # Try by payment ID
+        try:
+            pid = uuid.UUID(reference)
+            result = await db.execute(
+                select(Payment).where(Payment.id == pid, Payment.user_id == user_id)
+            )
+            payment = result.scalar_one_or_none()
+        except ValueError:
+            pass
+    if not payment:
+        raise NotFoundError("Payment not found")
+    return payment
+
+
+async def get_wallet_transactions(
+    db: AsyncSession, user_id: uuid.UUID, page: int = 1, page_size: int = 20
+) -> list[WalletTransaction]:
+    """Get wallet transaction history for the current user."""
+    wallet = await get_or_create_wallet(db, user_id)
+    result = await db.execute(
+        select(WalletTransaction)
+        .where(WalletTransaction.wallet_id == wallet.id)
+        .order_by(WalletTransaction.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    return list(result.scalars().all())
+
+
 def verify_paystack_signature(payload_bytes: bytes, signature: str) -> bool:
     expected = hmac.HMAC(
         settings.paystack_secret_key.encode(),

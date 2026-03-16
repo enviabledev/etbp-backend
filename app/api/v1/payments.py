@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from sqlalchemy import select
 
 from app.core.exceptions import NotFoundError
@@ -13,6 +13,7 @@ from app.schemas.payment import (
     WalletPaymentRequest,
     WalletPaymentResponse,
     WalletResponse,
+    WalletTransactionResponse,
     WalletTopupRequest,
     WalletTopupResponse,
 )
@@ -39,6 +40,12 @@ async def get_payment(payment_id: uuid.UUID, db: DBSession, current_user: Curren
     if not payment:
         raise NotFoundError("Payment not found")
     return payment
+
+
+@router.get("/verify/{reference}", response_model=PaymentResponse)
+async def verify_payment(reference: str, db: DBSession, current_user: CurrentUser):
+    """Verify payment status by gateway reference. Used after Paystack redirect."""
+    return await payment_service.verify_payment_by_reference(db, current_user.id, reference)
 
 
 @router.post("/webhook/paystack")
@@ -77,4 +84,17 @@ async def topup_wallet(
 ):
     return await payment_service.initiate_wallet_topup(
         db, current_user.id, data.amount, data.callback_url
+    )
+
+
+@router.get("/wallet/transactions", response_model=list[WalletTransactionResponse])
+async def get_wallet_transactions(
+    db: DBSession,
+    current_user: CurrentUser,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+):
+    """Get wallet transaction history for the current user."""
+    return await payment_service.get_wallet_transactions(
+        db, current_user.id, page, page_size
     )

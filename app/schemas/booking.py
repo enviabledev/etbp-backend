@@ -1,7 +1,7 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime, time
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
 from app.core.constants import BookingStatus, GenderType
 from app.schemas.common import BaseSchema
@@ -37,11 +37,51 @@ class BookingPassengerResponse(BaseSchema):
     is_primary: bool
     checked_in: bool
     qr_code_data: str | None
+    seat_number: str | None = None
+    seat_type: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def extract_seat_info(cls, data: object) -> object:
+        """Extract seat_number from the related seat object if present."""
+        if hasattr(data, "seat") and data.seat:
+            if not getattr(data, "seat_number", None):
+                data.seat_number = data.seat.seat_number  # type: ignore[union-attr]
+            if not getattr(data, "seat_type", None):
+                data.seat_type = data.seat.seat_type  # type: ignore[union-attr]
+        return data
+
+
+class TerminalBrief(BaseSchema):
+    id: uuid.UUID
+    name: str
+    code: str
+    city: str
+    state: str
+
+
+class RouteBrief(BaseSchema):
+    id: uuid.UUID
+    name: str
+    code: str
+    origin_terminal: TerminalBrief
+    destination_terminal: TerminalBrief
+
+
+class TripBrief(BaseSchema):
+    id: uuid.UUID
+    departure_date: date
+    departure_time: time
+    status: str
+    price: float
+    route: RouteBrief | None = None
+    vehicle_type: dict | None = None
 
 
 class BookingResponse(BaseSchema):
     id: uuid.UUID
     reference: str
+    booking_reference: str | None = None  # alias for frontend compatibility
     user_id: uuid.UUID
     trip_id: uuid.UUID
     status: BookingStatus
@@ -53,14 +93,38 @@ class BookingResponse(BaseSchema):
     special_requests: str | None
     created_at: datetime
 
+    @model_validator(mode="before")
+    @classmethod
+    def set_booking_reference(cls, data: object) -> object:
+        """Set booking_reference as alias for reference."""
+        if hasattr(data, "reference"):
+            data.booking_reference = data.reference  # type: ignore[union-attr]
+        elif isinstance(data, dict) and "reference" in data:
+            data["booking_reference"] = data["reference"]
+        return data
+
 
 class BookingDetailResponse(BookingResponse):
     passengers: list[BookingPassengerResponse] = []
+    trip: TripBrief | None = None
     emergency_contact_name: str | None
     emergency_contact_phone: str | None
     cancellation_reason: str | None
     cancelled_at: datetime | None
     checked_in_at: datetime | None
+    promo_code: str | None = None
+    promo_discount: float = 0
+    payment_method: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def extract_payment_info(cls, data: object) -> object:
+        """Extract payment_method from the related payments if present."""
+        if hasattr(data, "payments") and data.payments:
+            successful = [p for p in data.payments if p.status in ("successful", "completed")]
+            if successful:
+                data.payment_method = successful[0].method  # type: ignore[union-attr]
+        return data
 
 
 class CancelBookingRequest(BaseModel):

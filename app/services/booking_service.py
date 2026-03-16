@@ -114,7 +114,10 @@ async def create_booking(
 
     result = await db.execute(
         select(Booking)
-        .options(selectinload(Booking.passengers))
+        .options(
+            selectinload(Booking.passengers).selectinload(BookingPassenger.seat),
+            selectinload(Booking.trip).selectinload(Trip.route),
+        )
         .where(Booking.id == booking.id)
     )
     return BookingDetailResponse.model_validate(result.scalar_one())
@@ -123,9 +126,20 @@ async def create_booking(
 async def get_booking_by_reference(
     db: AsyncSession, reference: str, user_id: uuid.UUID | None = None
 ) -> Booking:
+    from app.models.route import Route
+
     result = await db.execute(
         select(Booking)
-        .options(selectinload(Booking.passengers))
+        .options(
+            selectinload(Booking.passengers).selectinload(BookingPassenger.seat),
+            selectinload(Booking.trip)
+            .selectinload(Trip.route)
+            .selectinload(Route.origin_terminal),
+            selectinload(Booking.trip)
+            .selectinload(Trip.route)
+            .selectinload(Route.destination_terminal),
+            selectinload(Booking.payments),
+        )
         .where(Booking.reference == reference.upper())
     )
     booking = result.scalar_one_or_none()
@@ -317,7 +331,10 @@ async def reschedule_booking(
 
     result = await db.execute(
         select(Booking)
-        .options(selectinload(Booking.passengers))
+        .options(
+            selectinload(Booking.passengers).selectinload(BookingPassenger.seat),
+            selectinload(Booking.trip).selectinload(Trip.route),
+        )
         .where(Booking.id == booking.id)
     )
     return BookingDetailResponse.model_validate(result.scalar_one())

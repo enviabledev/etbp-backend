@@ -45,7 +45,22 @@ async def list_my_bookings(
     from datetime import date
     from sqlalchemy import func
 
-    base_query = select(Booking).where(Booking.user_id == current_user.id)
+    from app.models.schedule import Trip
+    from app.models.route import Route
+
+    base_query = (
+        select(Booking)
+        .options(
+            selectinload(Booking.passengers),
+            selectinload(Booking.trip)
+            .selectinload(Trip.route)
+            .selectinload(Route.origin_terminal),
+            selectinload(Booking.trip)
+            .selectinload(Trip.route)
+            .selectinload(Route.destination_terminal),
+        )
+        .where(Booking.user_id == current_user.id)
+    )
     if status:
         base_query = base_query.where(Booking.status == status.value)
     if upcoming is True:
