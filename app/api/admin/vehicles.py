@@ -17,6 +17,23 @@ from app.models.vehicle import Vehicle, VehicleType
 
 router = APIRouter(prefix="/vehicles", tags=["Admin - Vehicles"])
 
+
+def generate_default_seat_layout(capacity: int, columns: int = 2) -> dict:
+    """Generate a default seat layout grid from capacity and column count."""
+    rows = []
+    seat_num = 1
+    row_num = 1
+    while seat_num <= capacity:
+        seats = []
+        for col in range(1, columns + 1):
+            if seat_num <= capacity:
+                seat_type = "window" if col in (1, columns) else "aisle"
+                seats.append({"number": seat_num, "col": col, "type": seat_type})
+                seat_num += 1
+        rows.append({"row": row_num, "seats": seats})
+        row_num += 1
+    return {"rows": rows, "columns": columns}
+
 AdminUser = Depends(require_role(UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.FLEET_MANAGER))
 
 
@@ -70,7 +87,10 @@ class UpdateVehicleRequest(BaseModel):
 
 @router.post("/types", status_code=201, dependencies=[AdminUser])
 async def create_vehicle_type(data: CreateVehicleTypeRequest, db: DBSession):
-    vt = VehicleType(**data.model_dump())
+    dump = data.model_dump()
+    if not dump.get("seat_layout") and dump.get("seat_capacity"):
+        dump["seat_layout"] = generate_default_seat_layout(dump["seat_capacity"])
+    vt = VehicleType(**dump)
     db.add(vt)
     await db.flush()
     await db.refresh(vt)
@@ -110,7 +130,15 @@ async def update_vehicle_type(type_id: uuid.UUID, data: UpdateVehicleTypeRequest
     if not vt:
         raise NotFoundError("Vehicle type not found")
 
-    for field, value in data.model_dump(exclude_unset=True).items():
+    updates = data.model_dump(exclude_unset=True)
+
+    # Auto-regenerate seat layout when capacity changes
+    new_capacity = updates.get("seat_capacity")
+    if new_capacity and new_capacity != vt.seat_capacity:
+        existing_cols = (vt.seat_layout or {}).get("columns", 2)
+        updates["seat_layout"] = generate_default_seat_layout(new_capacity, existing_cols)
+
+    for field, value in updates.items():
         setattr(vt, field, value)
 
     await db.flush()
