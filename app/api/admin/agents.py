@@ -1,5 +1,6 @@
 import secrets
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, EmailStr, Field
@@ -11,7 +12,10 @@ from app.core.exceptions import ConflictError, NotFoundError
 from app.core.security import hash_password
 from app.dependencies import DBSession, require_role
 from app.models.booking import Booking
+from app.models.route import Route
+from app.models.schedule import Trip
 from app.models.user import User
+from app.schemas.user import UserResponse
 
 router = APIRouter(prefix="/agents", tags=["Admin - Agents"])
 
@@ -24,6 +28,14 @@ class CreateAgentRequest(BaseModel):
     email: EmailStr
     phone: str = Field(..., max_length=20)
     password: str | None = Field(None, min_length=8)
+
+
+class UpdateAgentRequest(BaseModel):
+    first_name: str | None = Field(None, max_length=100)
+    last_name: str | None = Field(None, max_length=100)
+    email: EmailStr | None = None
+    phone: str | None = Field(None, max_length=20)
+    is_active: bool | None = None
 
 
 @router.post("", status_code=201, dependencies=[AdminUser])
@@ -86,3 +98,126 @@ async def list_agents(
             "last_booking": str(last_booking) if last_booking else None,
         })
     return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+# ---------------------------------------------------------------------------
+# Agent detail endpoints
+# ---------------------------------------------------------------------------
+
+@router.get("/{user_id}", dependencies=[AdminUser])
+async def get_agent_detail(user_id: uuid.UUID, db: DBSession):
+    result = await db.execute(
+        select(User).where(User.id == user_id, User.role == UserRole.AGENT)
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise NotFoundError("Agent not found")
+
+    # Stats: total bookings, total revenue, bookings this month
+    stats_q = await db.execute(
+        select(
+            func.count(Booking.id).label("total_bookings"),
+            func.coalesce(func.sum(Booking.total_amount), 0).label("total_revenue"),
+        ).where(Booking.booked_by_user_id == user_id)
+    )
+    stats = stats_q.one()
+
+    # Bookings this month
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    month_q = await db.execute(
+        select(func.count(Booking.id)).where(
+            Booking.booked_by_user_id == user_id,
+            Booking.created_at >= month_start,
+        )
+    )
+    bookings_this_month = month_q.scalar() or 0
+
+    # Recent bookings (last 10) with route name
+    recent_q = await db.execute(
+        select(
+            Booking.reference,
+            Route.name.label("route_name"),
+            Trip.departure_date,
+            Booking.status,
+            Booking.total_amount,
+            Booking.created_at,
+        )
+        .join(Trip, Trip.id == Booking.trip_id)
+        .join(Route, Route.id == Trip.route_id)
+        .where(Booking.booked_by_user_id == user_id)
+        .order_by(Booking.created_at.desc())
+        .limit(10)
+    )
+    recent_bookings = [
+        {
+            "reference": row.reference,
+            "route_name": row.route_name,
+            "departure_date": str(row.departure_date),
+            "status": row.status,
+            "amount": float(row.total_amount),
+            "created_at": str(row.created_at),
+        }
+        for row in recent_q.all()
+    ]
+
+    return {
+        "user": UserResponse.model_validate(user),
+        "stats": {
+            "total_bookings": stats.total_bookings,
+            "total_revenue": float(stats.total_revenue),
+            "bookings_this_month": bookings_this_month,
+        },
+        "recent_bookings": recent_bookings,
+    }
+
+
+@router.put("/{user_id}", dependencies=[AdminUser])
+async def update_agent(user_id: uuid.UUID, data: UpdateAgentRequest, db: DBSession):
+    result = await db.execute(
+        select(User).where(User.id == user_id, User.role == UserRole.AGENT)
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise NotFoundError("Agent not found")
+
+    update_data = data.model_dump(exclude_unset=True)
+
+    # Check email uniqueness if changing
+    if "email" in update_data and update_data["email"] is not None:
+        email_lower = update_data["email"].lower()
+        existing = await db.execute(
+            select(User).where(User.email == email_lower, User.id != user_id)
+        )
+        if existing.scalar_one_or_none():
+            raise ConflictError("A user with this email already exists")
+        update_data["email"] = email_lower
+
+    # Check phone uniqueness if changing
+    if "phone" in update_data and update_data["phone"] is not None:
+        existing = await db.execute(
+            select(User).where(User.phone == update_data["phone"], User.id != user_id)
+        )
+        if existing.scalar_one_or_none():
+            raise ConflictError("A user with this phone number already exists")
+
+    for field, value in update_data.items():
+        setattr(user, field, value)
+
+    await db.flush()
+    await db.refresh(user)
+    return UserResponse.model_validate(user)
+
+
+@router.delete("/{user_id}", dependencies=[AdminUser])
+async def delete_agent(user_id: uuid.UUID, db: DBSession):
+    result = await db.execute(
+        select(User).where(User.id == user_id, User.role == UserRole.AGENT)
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise NotFoundError("Agent not found")
+
+    user.is_active = False
+    await db.flush()
+    return {"message": "Agent deactivated"}

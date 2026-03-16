@@ -1,6 +1,6 @@
 import secrets
 import uuid
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, EmailStr, Field
@@ -12,7 +12,10 @@ from app.core.exceptions import ConflictError, NotFoundError
 from app.core.security import hash_password
 from app.dependencies import DBSession, require_role
 from app.models.driver import Driver
+from app.models.route import Route
+from app.models.schedule import Trip
 from app.models.user import User
+from app.models.vehicle import Vehicle
 
 router = APIRouter(prefix="/drivers", tags=["Admin - Drivers"])
 
@@ -104,6 +107,74 @@ async def list_drivers(
     return {"items": result.scalars().all(), "total": total, "page": page, "page_size": page_size}
 
 
+@router.get("/{driver_id}/detail", dependencies=[AdminUser])
+async def get_driver_detail(driver_id: uuid.UUID, db: DBSession):
+    result = await db.execute(
+        select(Driver)
+        .options(selectinload(Driver.user), selectinload(Driver.assigned_terminal))
+        .where(Driver.id == driver_id)
+    )
+    driver = result.scalar_one_or_none()
+    if not driver:
+        raise NotFoundError("Driver not found")
+
+    today = date.today()
+    threshold = today + timedelta(days=30)
+
+    license_days = (driver.license_expiry - today).days
+    license_expiring_soon = license_days <= 30
+
+    if driver.medical_check_expiry:
+        medical_days = (driver.medical_check_expiry - today).days
+        medical_expiring_soon = medical_days <= 30
+    else:
+        medical_days = None
+        medical_expiring_soon = False
+
+    # Trip history: last 20 assigned trips with route name and vehicle plate
+    trip_q = await db.execute(
+        select(
+            Trip.id,
+            Route.name.label("route_name"),
+            Trip.departure_date,
+            Trip.departure_time,
+            Trip.status,
+            Vehicle.plate_number.label("vehicle_plate"),
+        )
+        .join(Route, Route.id == Trip.route_id)
+        .outerjoin(Vehicle, Vehicle.id == Trip.vehicle_id)
+        .where(Trip.driver_id == driver_id)
+        .order_by(Trip.departure_date.desc(), Trip.departure_time.desc())
+        .limit(20)
+    )
+    trip_history = [
+        {
+            "id": str(row.id),
+            "route_name": row.route_name,
+            "departure_date": str(row.departure_date),
+            "departure_time": str(row.departure_time),
+            "status": row.status,
+            "vehicle_plate": row.vehicle_plate,
+        }
+        for row in trip_q.all()
+    ]
+
+    return {
+        "driver": driver,
+        "compliance": {
+            "license_expiring_soon": license_expiring_soon,
+            "medical_expiring_soon": medical_expiring_soon,
+            "license_days_remaining": license_days,
+            "medical_days_remaining": medical_days,
+        },
+        "trip_history": trip_history,
+        "performance": {
+            "rating_avg": float(driver.rating_avg),
+            "total_trips": driver.total_trips,
+        },
+    }
+
+
 @router.get("/{driver_id}", dependencies=[AdminUser])
 async def get_driver(driver_id: uuid.UUID, db: DBSession):
     result = await db.execute(
@@ -133,3 +204,19 @@ async def update_driver(driver_id: uuid.UUID, data: UpdateDriverRequest, db: DBS
         .where(Driver.id == driver_id)
     )
     return result.scalar_one()
+
+
+@router.delete("/{driver_id}", dependencies=[AdminUser])
+async def delete_driver(driver_id: uuid.UUID, db: DBSession):
+    result = await db.execute(
+        select(Driver).options(selectinload(Driver.user)).where(Driver.id == driver_id)
+    )
+    driver = result.scalar_one_or_none()
+    if not driver:
+        raise NotFoundError("Driver not found")
+
+    # Soft delete: deactivate user and mark driver unavailable
+    driver.user.is_active = False
+    driver.is_available = False
+    await db.flush()
+    return {"message": "Driver deactivated"}
