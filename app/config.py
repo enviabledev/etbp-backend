@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 30
 
     # CORS
-    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:5173"]
+    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:5173"]
 
     # Paystack
     paystack_secret_key: str = ""
