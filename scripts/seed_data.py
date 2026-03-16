@@ -17,50 +17,43 @@ from app.models.schedule import Schedule, Trip, TripSeat
 from app.models.user import User
 from app.models.vehicle import Vehicle, VehicleType
 
-# Van layouts: 3 seats per row (2 left + aisle + 1 right)
+# Van layouts: seat_layout is the SINGLE SOURCE OF TRUTH for seat generation.
+# Each seat has: number (int), col (grid column), type (window/aisle/middle).
 STANDARD_VAN_LAYOUT = {
     "columns": 3,
-    "arrangement": "2-aisle-1",
     "rows": [
-        {"row": 1, "seats": [{"col": 1, "type": "window"}, {"col": 2, "type": "aisle"}, {"col": 3, "type": "window"}]},
-        {"row": 2, "seats": [{"col": 1, "type": "window"}, {"col": 2, "type": "aisle"}, {"col": 3, "type": "window"}]},
-        {"row": 3, "seats": [{"col": 1, "type": "window"}, {"col": 2, "type": "aisle"}, {"col": 3, "type": "window"}]},
-        {"row": 4, "seats": [{"col": 1, "type": "window"}, {"col": 2, "type": "middle"}, {"col": 3, "type": "window"}]},
-        {"row": 5, "seats": [{"col": 1, "type": "window"}, {"col": 2, "type": "middle"}]},  # back row: 2 extra
+        {"row": 1, "seats": [{"number": 1, "col": 1, "type": "window"}, {"number": 2, "col": 2, "type": "aisle"}, {"number": 3, "col": 3, "type": "window"}]},
+        {"row": 2, "seats": [{"number": 4, "col": 1, "type": "window"}, {"number": 5, "col": 2, "type": "aisle"}, {"number": 6, "col": 3, "type": "window"}]},
+        {"row": 3, "seats": [{"number": 7, "col": 1, "type": "window"}, {"number": 8, "col": 2, "type": "aisle"}, {"number": 9, "col": 3, "type": "window"}]},
+        {"row": 4, "seats": [{"number": 10, "col": 1, "type": "window"}, {"number": 11, "col": 2, "type": "middle"}, {"number": 12, "col": 3, "type": "window"}]},
+        {"row": 5, "seats": [{"number": 13, "col": 1, "type": "window"}, {"number": 14, "col": 2, "type": "middle"}]},
     ],
 }
 
 EXECUTIVE_VAN_LAYOUT = {
     "columns": 3,
-    "arrangement": "2-aisle-1",
     "rows": [
-        {"row": 1, "seats": [{"col": 1, "type": "window"}, {"col": 2, "type": "aisle"}, {"col": 3, "type": "window"}]},
-        {"row": 2, "seats": [{"col": 1, "type": "window"}, {"col": 2, "type": "aisle"}, {"col": 3, "type": "window"}]},
-        {"row": 3, "seats": [{"col": 1, "type": "window"}, {"col": 2, "type": "aisle"}, {"col": 3, "type": "window"}]},
-        {"row": 4, "seats": [{"col": 1, "type": "window"}, {"col": 2, "type": "aisle"}, {"col": 3, "type": "window"}]},
+        {"row": 1, "seats": [{"number": 1, "col": 1, "type": "window"}, {"number": 2, "col": 2, "type": "aisle"}, {"number": 3, "col": 3, "type": "window"}]},
+        {"row": 2, "seats": [{"number": 4, "col": 1, "type": "window"}, {"number": 5, "col": 2, "type": "aisle"}, {"number": 6, "col": 3, "type": "window"}]},
+        {"row": 3, "seats": [{"number": 7, "col": 1, "type": "window"}, {"number": 8, "col": 2, "type": "aisle"}, {"number": 9, "col": 3, "type": "window"}]},
+        {"row": 4, "seats": [{"number": 10, "col": 1, "type": "window"}, {"number": 11, "col": 2, "type": "aisle"}, {"number": 12, "col": 3, "type": "window"}]},
     ],
 }
 
 
-def _gen_seats(trip_id, capacity: int, columns: int = 3) -> list[TripSeat]:
-    """Generate seats with simple integer numbering: 1, 2, 3..."""
+def _gen_seats_from_layout(trip_id, layout: dict) -> list[TripSeat]:
+    """Generate seats dynamically from seat_layout JSON. Layout is the single source of truth."""
     seats = []
-    num = 0
-    row = 1
-    while num < capacity:
-        for col in range(1, columns + 1):
-            num += 1
-            if num > capacity:
-                break
-            seat_type = "window" if col in (1, columns) else "aisle"
+    for row_data in layout.get("rows", []):
+        row_num = row_data["row"]
+        for seat_data in row_data.get("seats", []):
             seats.append(TripSeat(
                 trip_id=trip_id,
-                seat_number=str(num),
-                seat_row=row,
-                seat_column=col,
-                seat_type=seat_type,
+                seat_number=str(seat_data["number"]),
+                seat_row=row_num,
+                seat_column=seat_data.get("col", 1),
+                seat_type=seat_data.get("type", "aisle"),
             ))
-        row += 1
     return seats
 
 
@@ -196,7 +189,7 @@ async def seed():
                 db.add(trip)
                 await db.flush()
 
-                seats = _gen_seats(trip.id, vtype.seat_capacity)
+                seats = _gen_seats_from_layout(trip.id, vtype.seat_layout or {})
                 for seat in seats:
                     db.add(seat)
 

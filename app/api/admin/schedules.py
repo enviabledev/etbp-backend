@@ -124,17 +124,34 @@ async def create_trip(data: CreateTripRequest, db: DBSession):
     await db.flush()
 
     if data.generate_seats:
-        for i in range(1, data.total_seats + 1):
-            row = (i - 1) // 4 + 1
-            col = (i - 1) % 4 + 1
-            seat_type = "window" if col in (1, 4) else "aisle"
-            seat = TripSeat(
-                trip_id=trip.id,
-                seat_number=str(i),
-                seat_row=row,
-                seat_column=col,
-                seat_type=seat_type,
+        # Try to find vehicle type via schedule
+        vtype = None
+        if data.schedule_id:
+            sched = await db.execute(
+                select(Schedule).options(selectinload(Schedule.vehicle_type))
+                .where(Schedule.id == data.schedule_id)
             )
+            s = sched.scalar_one_or_none()
+            if s and s.vehicle_type:
+                vtype = s.vehicle_type
+
+        if vtype:
+            seats = _generate_seats_from_layout(trip.id, vtype)
+        else:
+            # Fallback: simple numbered grid
+            seats = []
+            cols = 3
+            for i in range(1, data.total_seats + 1):
+                row = (i - 1) // cols + 1
+                col = (i - 1) % cols + 1
+                seats.append(TripSeat(
+                    trip_id=trip.id,
+                    seat_number=str(i),
+                    seat_row=row,
+                    seat_column=col,
+                    seat_type="window" if col in (1, cols) else "aisle",
+                ))
+        for seat in seats:
             db.add(seat)
         await db.flush()
 
@@ -257,28 +274,50 @@ class GenerateTripsRequest(BaseModel):
 
 
 def _generate_seats_from_layout(trip_id: uuid.UUID, vehicle_type: VehicleType) -> list[TripSeat]:
-    """Generate TripSeat objects from a vehicle type's seat_layout."""
-    layout = vehicle_type.seat_layout or {}
-    columns = layout.get("columns", 4)
-    skip_cols = set(layout.get("skip", []))
-    capacity = vehicle_type.seat_capacity
+    """Generate TripSeat objects dynamically from vehicle_type.seat_layout.
 
+    seat_layout is the SINGLE SOURCE OF TRUTH. Format:
+    {
+        "columns": 3,
+        "rows": [
+            {"row": 1, "seats": [{"number": 1, "col": 1, "type": "window"}, ...]},
+            ...
+        ]
+    }
+
+    If seat_layout has no "rows" key, falls back to generating a simple
+    grid from seat_capacity and columns.
+    """
+    layout = vehicle_type.seat_layout or {}
+    rows = layout.get("rows")
+
+    if rows:
+        # Dynamic: read seats directly from layout JSON
+        seats = []
+        for row_data in rows:
+            row_num = row_data["row"]
+            for seat_data in row_data.get("seats", []):
+                seats.append(TripSeat(
+                    trip_id=trip_id,
+                    seat_number=str(seat_data["number"]),
+                    seat_row=row_num,
+                    seat_column=seat_data.get("col", 1),
+                    seat_type=seat_data.get("type", "aisle"),
+                ))
+        return seats
+
+    # Fallback: generate simple grid from capacity + columns
+    columns = layout.get("columns", 3)
+    capacity = vehicle_type.seat_capacity
     seats = []
     seat_num = 0
     row = 1
     while seat_num < capacity:
         for col in range(1, columns + 1):
-            if col in skip_cols:
-                continue
             seat_num += 1
             if seat_num > capacity:
                 break
-
-            if col == 1 or col == columns:
-                seat_type = "window"
-            else:
-                seat_type = "aisle"
-
+            seat_type = "window" if col in (1, columns) else "aisle"
             seats.append(TripSeat(
                 trip_id=trip_id,
                 seat_number=str(seat_num),
@@ -287,7 +326,6 @@ def _generate_seats_from_layout(trip_id: uuid.UUID, vehicle_type: VehicleType) -
                 seat_type=seat_type,
             ))
         row += 1
-
     return seats
 
 
