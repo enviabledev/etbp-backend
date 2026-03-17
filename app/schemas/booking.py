@@ -1,10 +1,11 @@
 import uuid
 from datetime import date, datetime, time
 
-from pydantic import BaseModel, EmailStr, Field, model_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from sqlalchemy import inspect as sa_inspect
 
 from app.core.constants import BookingStatus, GenderType
+from app.core.validators import validate_international_phone
 from app.schemas.common import BaseSchema
 
 
@@ -16,6 +17,11 @@ class PassengerInput(BaseModel):
     phone: str | None = Field(None, max_length=20)
     is_primary: bool = False
 
+    @field_validator("phone")
+    @classmethod
+    def check_phone(cls, v: str | None) -> str | None:
+        return validate_international_phone(v)
+
 
 class CreateBookingRequest(BaseModel):
     trip_id: uuid.UUID
@@ -26,6 +32,11 @@ class CreateBookingRequest(BaseModel):
     emergency_contact_phone: str | None = Field(None, max_length=20)
     special_requests: str | None = None
     promo_code: str | None = None
+
+    @field_validator("contact_phone", "emergency_contact_phone")
+    @classmethod
+    def check_phone(cls, v: str | None) -> str | None:
+        return validate_international_phone(v)
 
 
 class BookingPassengerResponse(BaseSchema):

@@ -34,6 +34,21 @@ async def register_user(db: AsyncSession, data: RegisterRequest) -> TokenRespons
         if phone_exists.scalar_one_or_none():
             raise ConflictError("A user with this phone number already exists")
 
+        # Verify phone was confirmed via OTP (skip in dev if no Redis)
+        try:
+            import redis.asyncio as _redis
+            r = _redis.from_url(settings.redis_url)
+            verified = await r.get(f"phone_verified:{data.phone}")
+            await r.aclose()
+            if not verified:
+                raise BadRequestError("Phone number must be verified via OTP before registration.")
+            # Clean up verification key
+            r = _redis.from_url(settings.redis_url)
+            await r.delete(f"phone_verified:{data.phone}")
+            await r.aclose()
+        except (ConnectionError, OSError):
+            pass  # Redis not available — skip check in dev
+
     user = User(
         email=data.email.lower(),
         password_hash=hash_password(data.password),
@@ -174,6 +189,21 @@ async def update_user_profile(
         )
         if phone_exists.scalar_one_or_none():
             raise ConflictError("Phone number already in use")
+
+        # If phone is changing, require OTP verification
+        if update_data["phone"] != user.phone:
+            try:
+                import redis.asyncio as _redis
+                r = _redis.from_url(settings.redis_url)
+                verified = await r.get(f"phone_verified:{update_data['phone']}")
+                await r.aclose()
+                if not verified:
+                    raise BadRequestError("New phone number must be verified via OTP.")
+                r = _redis.from_url(settings.redis_url)
+                await r.delete(f"phone_verified:{update_data['phone']}")
+                await r.aclose()
+            except (ConnectionError, OSError):
+                pass  # Redis not available — skip check in dev
 
     for field, value in update_data.items():
         setattr(user, field, value)
