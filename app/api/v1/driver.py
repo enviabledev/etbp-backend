@@ -91,10 +91,11 @@ async def list_driver_trips(
         query = query.where(Trip.status == status)
     if date_from:
         query = query.where(Trip.departure_date >= date_from)
-    elif not date_to:
-        query = query.where(Trip.departure_date >= date.today())
     if date_to:
         query = query.where(Trip.departure_date <= date_to)
+    # Default: show today and future if no date filters and not filtering by status
+    if not date_from and not date_to and not status:
+        query = query.where(Trip.departure_date >= date.today())
 
     query = query.order_by(Trip.departure_date.asc(), Trip.departure_time.asc())
     query = query.offset(offset).limit(limit)
