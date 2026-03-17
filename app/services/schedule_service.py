@@ -41,10 +41,20 @@ async def get_trip_seats(db: AsyncSession, trip_id: uuid.UUID) -> dict:
 
     seats = sorted(trip.seats, key=lambda s: (s.seat_row or 0, s.seat_column or 0, s.seat_number))
 
+    # Derive counts from actual seat records for consistency
+    actual_total = len(trip.seats)
+    actual_available = sum(1 for s in trip.seats if s.status == SeatStatus.AVAILABLE)
+
+    # Sync the stored counts if they drifted
+    if trip.total_seats != actual_total or trip.available_seats != actual_available:
+        trip.total_seats = actual_total
+        trip.available_seats = actual_available
+        await db.flush()
+
     return {
         "trip_id": trip.id,
-        "total_seats": trip.total_seats,
-        "available_seats": trip.available_seats,
+        "total_seats": actual_total,
+        "available_seats": actual_available,
         "seats": [
             {
                 "id": s.id,

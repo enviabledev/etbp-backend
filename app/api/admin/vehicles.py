@@ -134,7 +134,8 @@ async def update_vehicle_type(type_id: uuid.UUID, data: UpdateVehicleTypeRequest
 
     # Auto-regenerate seat layout when capacity changes
     new_capacity = updates.get("seat_capacity")
-    if new_capacity and new_capacity != vt.seat_capacity:
+    capacity_changed = new_capacity and new_capacity != vt.seat_capacity
+    if capacity_changed:
         existing_cols = (vt.seat_layout or {}).get("columns", 2)
         updates["seat_layout"] = generate_default_seat_layout(new_capacity, existing_cols)
 
@@ -142,6 +143,54 @@ async def update_vehicle_type(type_id: uuid.UUID, data: UpdateVehicleTypeRequest
         setattr(vt, field, value)
 
     await db.flush()
+
+    # Regenerate seats for future scheduled trips using this vehicle type
+    if capacity_changed:
+        from app.api.admin.schedules import _generate_seats_from_layout
+        from app.models.schedule import Schedule, Trip as TripModel, TripSeat
+        from app.core.constants import SeatStatus
+
+        today = date.today()
+        # Find future trips via schedules that use this vehicle type
+        schedule_ids_q = await db.execute(
+            select(Schedule.id).where(Schedule.vehicle_type_id == type_id)
+        )
+        schedule_ids = [r for r in schedule_ids_q.scalars().all()]
+
+        if schedule_ids:
+            trip_q = await db.execute(
+                select(TripModel)
+                .options(selectinload(TripModel.seats))
+                .where(
+                    TripModel.schedule_id.in_(schedule_ids),
+                    TripModel.departure_date >= today,
+                    TripModel.status == "scheduled",
+                )
+            )
+            for trip in trip_q.scalars().all():
+                # Only regenerate if no seats are booked or locked
+                has_booked = any(
+                    s.status in (SeatStatus.BOOKED, SeatStatus.LOCKED)
+                    for s in trip.seats
+                )
+                if has_booked:
+                    continue
+
+                # Delete old seats
+                for seat in list(trip.seats):
+                    await db.delete(seat)
+                await db.flush()
+
+                # Create new seats
+                new_seats = _generate_seats_from_layout(trip.id, vt)
+                for seat in new_seats:
+                    db.add(seat)
+
+                trip.total_seats = len(new_seats)
+                trip.available_seats = len(new_seats)
+
+            await db.flush()
+
     await db.refresh(vt)
     return vt
 

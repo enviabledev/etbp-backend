@@ -264,6 +264,66 @@ async def assign_vehicle_driver(trip_id: uuid.UUID, data: AssignTripRequest, db:
     }
 
 
+# ── Regenerate Seats ──
+
+
+@router.post("/trips/{trip_id}/regenerate-seats", dependencies=[AdminUser])
+async def regenerate_trip_seats(trip_id: uuid.UUID, db: DBSession):
+    """Delete all existing seats and regenerate from vehicle type layout.
+    Fails if any seats are booked or locked."""
+    from app.core.constants import SeatStatus
+
+    result = await db.execute(
+        select(Trip)
+        .options(
+            selectinload(Trip.seats),
+            selectinload(Trip.schedule).selectinload(Schedule.vehicle_type),
+        )
+        .where(Trip.id == trip_id)
+    )
+    trip = result.scalar_one_or_none()
+    if not trip:
+        raise NotFoundError("Trip not found")
+
+    # Check for booked/locked seats
+    has_booked = any(
+        s.status in (SeatStatus.BOOKED, SeatStatus.LOCKED)
+        for s in trip.seats
+    )
+    if has_booked:
+        raise BadRequestError(
+            "Cannot regenerate seats: some seats are booked or locked"
+        )
+
+    # Get vehicle type from schedule
+    vtype = trip.schedule.vehicle_type if trip.schedule else None
+    if not vtype:
+        raise BadRequestError(
+            "Trip has no schedule or vehicle type. Cannot regenerate seats."
+        )
+
+    # Delete old seats
+    for seat in list(trip.seats):
+        await db.delete(seat)
+    await db.flush()
+
+    # Create new seats
+    new_seats = _generate_seats_from_layout(trip.id, vtype)
+    for seat in new_seats:
+        db.add(seat)
+
+    trip.total_seats = len(new_seats)
+    trip.available_seats = len(new_seats)
+    await db.flush()
+
+    return {
+        "trip_id": str(trip.id),
+        "total_seats": len(new_seats),
+        "available_seats": len(new_seats),
+        "message": f"Regenerated {len(new_seats)} seats from vehicle type layout",
+    }
+
+
 # ── Bulk Trip Generation ──
 
 
