@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1 import auth, bookings, otp, payments, reviews, routes, schedules, seats, support, terminals, users
+from app.api.v1 import auth, bookings, driver, otp, payments, reviews, routes, schedules, seats, support, terminals, users
 
 router = APIRouter(prefix="/v1")
 
@@ -15,3 +15,4 @@ router.include_router(bookings.router)
 router.include_router(payments.router)
 router.include_router(reviews.router)
 router.include_router(support.router)
+router.include_router(driver.router)
