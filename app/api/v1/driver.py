@@ -176,14 +176,25 @@ async def get_driver_trip_detail(trip_id: uuid.UUID, db: DBSession, driver: Driv
         "available_seats": trip.available_seats,
         "route": {
             "name": trip.route.name,
-            "origin_terminal": {"name": trip.route.origin_terminal.name, "city": trip.route.origin_terminal.city},
-            "destination_terminal": {"name": trip.route.destination_terminal.name, "city": trip.route.destination_terminal.city},
+            "origin_terminal": {
+                "name": trip.route.origin_terminal.name,
+                "city": trip.route.origin_terminal.city,
+                "latitude": float(trip.route.origin_terminal.latitude) if trip.route.origin_terminal.latitude else None,
+                "longitude": float(trip.route.origin_terminal.longitude) if trip.route.origin_terminal.longitude else None,
+            },
+            "destination_terminal": {
+                "name": trip.route.destination_terminal.name,
+                "city": trip.route.destination_terminal.city,
+                "latitude": float(trip.route.destination_terminal.latitude) if trip.route.destination_terminal.latitude else None,
+                "longitude": float(trip.route.destination_terminal.longitude) if trip.route.destination_terminal.longitude else None,
+            },
         } if trip.route else None,
         "vehicle": {
             "plate_number": trip.vehicle.plate_number,
         } if trip.vehicle else None,
         "passengers_booked": counts.total,
         "passengers_checked_in": counts.checked_in,
+        "inspection_data": trip.inspection_data,
     }
 
 
@@ -292,7 +303,7 @@ async def checkin_passenger(
 
     result = await db.execute(
         select(Booking)
-        .options(selectinload(Booking.passengers))
+        .options(selectinload(Booking.passengers).selectinload(BookingPassenger.seat))
         .where(Booking.id == booking_id, Booking.trip_id == trip_id)
     )
     booking = result.scalar_one_or_none()
@@ -307,11 +318,15 @@ async def checkin_passenger(
         p.checked_in = True
     await db.flush()
 
+    primary = next((p for p in booking.passengers if p.is_primary), booking.passengers[0] if booking.passengers else None)
     return {
         "booking_id": str(booking.id),
-        "reference": booking.reference,
+        "booking_ref": booking.reference,
+        "passenger_name": f"{primary.first_name} {primary.last_name}" if primary else "Unknown",
+        "seat_number": primary.seat.seat_number if primary and primary.seat else None,
         "status": booking.status,
         "checked_in_at": str(booking.checked_in_at),
+        "message": "Checked in successfully",
     }
 
 
