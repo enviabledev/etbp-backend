@@ -12,6 +12,7 @@ from app.dependencies import CurrentUser, DBSession
 from app.models.booking import Booking, BookingPassenger
 from app.models.driver import Driver
 from app.models.route import Route
+from app.models.vehicle import Vehicle
 from app.models.schedule import Trip, TripIncident, TripSeat
 from app.models.user import User
 
@@ -83,7 +84,7 @@ async def list_driver_trips(
         .options(
             selectinload(Trip.route).selectinload(Route.origin_terminal),
             selectinload(Trip.route).selectinload(Route.destination_terminal),
-            selectinload(Trip.vehicle),
+            selectinload(Trip.vehicle).selectinload(Vehicle.vehicle_type),
         )
         .where(Trip.driver_id == driver.id)
     )
@@ -124,8 +125,8 @@ async def list_driver_trips(
                 "destination": trip.route.destination_terminal.city if trip.route and trip.route.destination_terminal else None,
             },
             "vehicle": {
-                "plate_number": trip.vehicle.plate_number if trip.vehicle else None,
-                "type": trip.vehicle.vehicle_type.name if trip.vehicle and hasattr(trip.vehicle, 'vehicle_type') and trip.vehicle.vehicle_type else None,
+                "plate_number": trip.vehicle.plate_number,
+                "type": trip.vehicle.vehicle_type.name if trip.vehicle.vehicle_type else None,
             } if trip.vehicle else None,
             "passenger_count": passenger_count,
             "total_seats": trip.total_seats,
@@ -141,7 +142,7 @@ async def get_driver_trip_detail(trip_id: uuid.UUID, db: DBSession, driver: Driv
         .options(
             selectinload(Trip.route).selectinload(Route.origin_terminal),
             selectinload(Trip.route).selectinload(Route.destination_terminal),
-            selectinload(Trip.vehicle),
+            selectinload(Trip.vehicle).selectinload(Vehicle.vehicle_type),
             selectinload(Trip.seats),
         )
         .where(Trip.id == trip_id)
