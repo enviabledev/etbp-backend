@@ -7,7 +7,8 @@ from sqlalchemy import func, select
 
 from app.core.constants import DiscountType, UserRole
 from app.core.exceptions import ConflictError, NotFoundError
-from app.dependencies import DBSession, require_role
+from app.dependencies import CurrentUser, DBSession, require_role
+from app.services.audit_service import log_action
 from app.models.payment import PromoCode
 
 router = APIRouter(prefix="/promos", tags=["Admin - Promo Codes"])
@@ -43,7 +44,7 @@ class UpdatePromoRequest(BaseModel):
 
 
 @router.post("", status_code=201, dependencies=[AdminUser])
-async def create_promo(data: CreatePromoRequest, db: DBSession):
+async def create_promo(data: CreatePromoRequest, db: DBSession, current_user: CurrentUser):
     existing = await db.execute(
         select(PromoCode).where(PromoCode.code == data.code.upper())
     )
@@ -55,6 +56,7 @@ async def create_promo(data: CreatePromoRequest, db: DBSession):
     db.add(promo)
     await db.flush()
     await db.refresh(promo)
+    await log_action(db, current_user.id, "create_promo", "promo", str(promo.id), {"code": promo.code})
     return promo
 
 
@@ -103,7 +105,7 @@ async def get_promo(promo_id: uuid.UUID, db: DBSession):
 
 
 @router.put("/{promo_id}", dependencies=[AdminUser])
-async def update_promo(promo_id: uuid.UUID, data: UpdatePromoRequest, db: DBSession):
+async def update_promo(promo_id: uuid.UUID, data: UpdatePromoRequest, db: DBSession, current_user: CurrentUser):
     result = await db.execute(select(PromoCode).where(PromoCode.id == promo_id))
     promo = result.scalar_one_or_none()
     if not promo:
@@ -112,15 +114,17 @@ async def update_promo(promo_id: uuid.UUID, data: UpdatePromoRequest, db: DBSess
         setattr(promo, field, value)
     await db.flush()
     await db.refresh(promo)
+    await log_action(db, current_user.id, "update_promo", "promo", str(promo_id))
     return promo
 
 
 @router.put("/{promo_id}/deactivate", dependencies=[AdminUser])
-async def deactivate_promo(promo_id: uuid.UUID, db: DBSession):
+async def deactivate_promo(promo_id: uuid.UUID, db: DBSession, current_user: CurrentUser):
     result = await db.execute(select(PromoCode).where(PromoCode.id == promo_id))
     promo = result.scalar_one_or_none()
     if not promo:
         raise NotFoundError("Promo code not found")
     promo.is_active = False
     await db.flush()
+    await log_action(db, current_user.id, "deactivate_promo", "promo", str(promo_id))
     return {"id": str(promo.id), "code": promo.code, "is_active": promo.is_active}

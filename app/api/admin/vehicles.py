@@ -8,7 +8,8 @@ from sqlalchemy.orm import selectinload
 
 from app.core.constants import UserRole, VehicleStatus
 from app.core.exceptions import ConflictError, NotFoundError
-from app.dependencies import DBSession, require_role
+from app.dependencies import CurrentUser, DBSession, require_role
+from app.services.audit_service import log_action
 from app.models.driver import Driver
 from app.models.route import Route
 from app.models.schedule import Trip
@@ -86,7 +87,7 @@ class UpdateVehicleRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 @router.post("/types", status_code=201, dependencies=[AdminUser])
-async def create_vehicle_type(data: CreateVehicleTypeRequest, db: DBSession):
+async def create_vehicle_type(data: CreateVehicleTypeRequest, db: DBSession, current_user: CurrentUser):
     dump = data.model_dump()
     if not dump.get("seat_layout") and dump.get("seat_capacity"):
         dump["seat_layout"] = generate_default_seat_layout(dump["seat_capacity"])
@@ -94,6 +95,7 @@ async def create_vehicle_type(data: CreateVehicleTypeRequest, db: DBSession):
     db.add(vt)
     await db.flush()
     await db.refresh(vt)
+    await log_action(db, current_user.id, "create_vehicle_type", "vehicle_type", str(vt.id), {"name": vt.name})
     return vt
 
 
@@ -124,7 +126,7 @@ async def get_vehicle_type_detail(type_id: uuid.UUID, db: DBSession):
 
 
 @router.put("/types/{type_id}", dependencies=[AdminUser])
-async def update_vehicle_type(type_id: uuid.UUID, data: UpdateVehicleTypeRequest, db: DBSession):
+async def update_vehicle_type(type_id: uuid.UUID, data: UpdateVehicleTypeRequest, db: DBSession, current_user: CurrentUser):
     result = await db.execute(select(VehicleType).where(VehicleType.id == type_id))
     vt = result.scalar_one_or_none()
     if not vt:
@@ -192,6 +194,7 @@ async def update_vehicle_type(type_id: uuid.UUID, data: UpdateVehicleTypeRequest
             await db.flush()
 
     await db.refresh(vt)
+    await log_action(db, current_user.id, "update_vehicle_type", "vehicle_type", str(type_id))
     return vt
 
 
@@ -222,7 +225,7 @@ async def delete_vehicle_type(type_id: uuid.UUID, db: DBSession):
 # ---------------------------------------------------------------------------
 
 @router.post("", status_code=201, dependencies=[AdminUser])
-async def create_vehicle(data: CreateVehicleRequest, db: DBSession):
+async def create_vehicle(data: CreateVehicleRequest, db: DBSession, current_user: CurrentUser):
     existing = await db.execute(
         select(Vehicle).where(Vehicle.plate_number == data.plate_number.upper())
     )
@@ -234,6 +237,7 @@ async def create_vehicle(data: CreateVehicleRequest, db: DBSession):
     db.add(vehicle)
     await db.flush()
     await db.refresh(vehicle)
+    await log_action(db, current_user.id, "create_vehicle", "vehicle", str(vehicle.id), {"plate": vehicle.plate_number})
     return vehicle
 
 

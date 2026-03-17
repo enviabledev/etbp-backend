@@ -8,7 +8,8 @@ from sqlalchemy.orm import selectinload
 
 from app.core.constants import UserRole
 from app.core.exceptions import ConflictError, NotFoundError
-from app.dependencies import DBSession, require_role
+from app.dependencies import CurrentUser, DBSession, require_role
+from app.services.audit_service import log_action
 from app.models.route import Route, RouteStop, Terminal
 
 router = APIRouter(prefix="/routes", tags=["Admin - Routes"])
@@ -78,7 +79,7 @@ class AddRouteStopRequest(BaseModel):
 
 
 @router.post("/terminals", status_code=201, dependencies=[AdminUser])
-async def create_terminal(data: CreateTerminalRequest, db: DBSession):
+async def create_terminal(data: CreateTerminalRequest, db: DBSession, current_user: CurrentUser):
     existing = await db.execute(
         select(Terminal).where(Terminal.code == data.code.upper())
     )
@@ -90,6 +91,7 @@ async def create_terminal(data: CreateTerminalRequest, db: DBSession):
     db.add(terminal)
     await db.flush()
     await db.refresh(terminal)
+    await log_action(db, current_user.id, "create_terminal", "terminal", str(terminal.id), {"name": terminal.name, "code": terminal.code})
     return terminal
 
 
@@ -150,7 +152,7 @@ async def update_terminal(terminal_id: uuid.UUID, data: UpdateTerminalRequest, d
 
 
 @router.post("", status_code=201, dependencies=[AdminUser])
-async def create_route(data: CreateRouteRequest, db: DBSession):
+async def create_route(data: CreateRouteRequest, db: DBSession, current_user: CurrentUser):
     existing = await db.execute(
         select(Route).where(Route.code == data.code.upper())
     )
@@ -162,6 +164,7 @@ async def create_route(data: CreateRouteRequest, db: DBSession):
     db.add(route)
     await db.flush()
     await db.refresh(route)
+    await log_action(db, current_user.id, "create_route", "route", str(route.id), {"name": route.name})
     return route
 
 
@@ -218,7 +221,7 @@ async def get_route(route_id: uuid.UUID, db: DBSession):
 
 
 @router.put("/{route_id}", dependencies=[AdminUser])
-async def update_route(route_id: uuid.UUID, data: UpdateRouteRequest, db: DBSession):
+async def update_route(route_id: uuid.UUID, data: UpdateRouteRequest, db: DBSession, current_user: CurrentUser):
     result = await db.execute(select(Route).where(Route.id == route_id))
     route = result.scalar_one_or_none()
     if not route:
@@ -227,6 +230,7 @@ async def update_route(route_id: uuid.UUID, data: UpdateRouteRequest, db: DBSess
         setattr(route, field, value)
     await db.flush()
     await db.refresh(route)
+    await log_action(db, current_user.id, "update_route", "route", str(route_id))
     return route
 
 

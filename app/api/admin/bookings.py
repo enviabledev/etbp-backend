@@ -7,7 +7,8 @@ from sqlalchemy.orm import selectinload
 
 from app.core.constants import BookingStatus, UserRole
 from app.core.exceptions import BadRequestError, NotFoundError
-from app.dependencies import DBSession, require_role
+from app.dependencies import CurrentUser, DBSession, require_role
+from app.services.audit_service import log_action
 from app.models.booking import Booking
 from app.models.schedule import Trip
 
@@ -83,7 +84,7 @@ async def get_booking(booking_id: uuid.UUID, db: DBSession):
 
 @router.put("/{booking_id}/status", dependencies=[AdminUser])
 async def update_booking_status(
-    booking_id: uuid.UUID, status: BookingStatus, db: DBSession
+    booking_id: uuid.UUID, status: BookingStatus, db: DBSession, current_user: CurrentUser
 ):
     result = await db.execute(select(Booking).where(Booking.id == booking_id))
     booking = result.scalar_one_or_none()
@@ -93,6 +94,7 @@ async def update_booking_status(
     old_status = booking.status
     booking.status = status.value
     await db.flush()
+    await log_action(db, current_user.id, "update_booking_status", "booking", str(booking_id), {"new_status": status.value})
     return {
         "id": str(booking.id),
         "reference": booking.reference,
@@ -102,7 +104,7 @@ async def update_booking_status(
 
 
 @router.put("/{booking_id}/check-in", dependencies=[AdminUser])
-async def check_in_booking(booking_id: uuid.UUID, db: DBSession):
+async def check_in_booking(booking_id: uuid.UUID, db: DBSession, current_user: CurrentUser):
     result = await db.execute(
         select(Booking).options(selectinload(Booking.passengers)).where(Booking.id == booking_id)
     )
@@ -118,6 +120,7 @@ async def check_in_booking(booking_id: uuid.UUID, db: DBSession):
     for passenger in booking.passengers:
         passenger.checked_in = True
     await db.flush()
+    await log_action(db, current_user.id, "check_in_booking", "booking", str(booking_id))
 
     return {
         "id": str(booking.id),

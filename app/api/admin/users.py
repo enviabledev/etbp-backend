@@ -10,7 +10,8 @@ from sqlalchemy.orm import selectinload
 from app.core.constants import GenderType, UserRole
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.core.security import hash_password
-from app.dependencies import DBSession, require_role
+from app.dependencies import CurrentUser, DBSession, require_role
+from app.services.audit_service import log_action
 from app.models.booking import Booking
 from app.models.driver import Driver
 from app.models.notification import AuditLog
@@ -374,7 +375,7 @@ async def update_admin(user_id: uuid.UUID, data: UpdateAdminRequest, db: DBSessi
 
 
 @router.post("/admins", status_code=201, dependencies=[AdminUser])
-async def create_admin(data: CreateAdminRequest, db: DBSession):
+async def create_admin(data: CreateAdminRequest, db: DBSession, current_user: CurrentUser):
     allowed_roles = {UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.FLEET_MANAGER}
     if data.role not in allowed_roles:
         raise BadRequestError("Role must be one of: admin, super_admin, fleet_manager")
@@ -400,6 +401,7 @@ async def create_admin(data: CreateAdminRequest, db: DBSession):
     db.add(user)
     await db.flush()
     await db.refresh(user)
+    await log_action(db, current_user.id, "create_admin", "user", str(user.id), {"email": data.email, "role": data.role.value})
     return UserResponse.model_validate(user)
 
 
@@ -463,7 +465,7 @@ async def update_user(user_id: uuid.UUID, data: AdminUserUpdateRequest, db: DBSe
 
 
 @router.put("/{user_id}/deactivate", dependencies=[AdminUser])
-async def deactivate_user(user_id: uuid.UUID, db: DBSession):
+async def deactivate_user(user_id: uuid.UUID, db: DBSession, current_user: CurrentUser):
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
@@ -472,17 +474,19 @@ async def deactivate_user(user_id: uuid.UUID, db: DBSession):
         raise BadRequestError("Cannot deactivate a super admin")
     user.is_active = False
     await db.flush()
+    await log_action(db, current_user.id, "deactivate_user", "user", str(user_id))
     return {"id": str(user.id), "is_active": False}
 
 
 @router.put("/{user_id}/activate", dependencies=[AdminUser])
-async def activate_user(user_id: uuid.UUID, db: DBSession):
+async def activate_user(user_id: uuid.UUID, db: DBSession, current_user: CurrentUser):
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
         raise NotFoundError("User not found")
     user.is_active = True
     await db.flush()
+    await log_action(db, current_user.id, "activate_user", "user", str(user_id))
     return {"id": str(user.id), "is_active": True}
 
 
@@ -491,6 +495,7 @@ async def change_user_role(
     user_id: uuid.UUID,
     role: UserRole,
     db: DBSession,
+    current_user: CurrentUser,
 ):
     """Change a user's role. Only super_admin can promote to admin/super_admin."""
     from app.core.permissions import ADMIN_ROLES
@@ -503,6 +508,7 @@ async def change_user_role(
     old_role = user.role
     user.role = role.value
     await db.flush()
+    await log_action(db, current_user.id, "change_role", "user", str(user_id), {"new_role": role.value})
     return {
         "id": str(user.id),
         "email": user.email,

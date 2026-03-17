@@ -8,7 +8,8 @@ from sqlalchemy.orm import selectinload
 
 from app.core.constants import TripStatus, UserRole
 from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
-from app.dependencies import DBSession, require_role
+from app.dependencies import CurrentUser, DBSession, require_role
+from app.services.audit_service import log_action
 from app.models.route import Route
 from app.models.schedule import Schedule, Trip, TripSeat
 from app.models.vehicle import VehicleType
@@ -66,11 +67,12 @@ class AssignTripRequest(BaseModel):
 
 
 @router.post("", status_code=201, dependencies=[AdminUser])
-async def create_schedule(data: CreateScheduleRequest, db: DBSession):
+async def create_schedule(data: CreateScheduleRequest, db: DBSession, current_user: CurrentUser):
     schedule = Schedule(**data.model_dump())
     db.add(schedule)
     await db.flush()
     await db.refresh(schedule)
+    await log_action(db, current_user.id, "create_schedule", "schedule", str(schedule.id))
     return schedule
 
 
@@ -117,7 +119,7 @@ async def update_schedule(schedule_id: uuid.UUID, data: UpdateScheduleRequest, d
 
 
 @router.post("/trips", status_code=201, dependencies=[AdminUser])
-async def create_trip(data: CreateTripRequest, db: DBSession):
+async def create_trip(data: CreateTripRequest, db: DBSession, current_user: CurrentUser):
     trip_data = data.model_dump(exclude={"generate_seats"})
     trip = Trip(**trip_data, available_seats=data.total_seats)
     db.add(trip)
@@ -156,6 +158,7 @@ async def create_trip(data: CreateTripRequest, db: DBSession):
         await db.flush()
 
     await db.refresh(trip)
+    await log_action(db, current_user.id, "create_trip", "trip", str(trip.id))
     return trip
 
 
@@ -215,7 +218,7 @@ async def get_trip(trip_id: uuid.UUID, db: DBSession):
 
 
 @router.put("/trips/{trip_id}", dependencies=[AdminUser])
-async def update_trip(trip_id: uuid.UUID, data: UpdateTripRequest, db: DBSession):
+async def update_trip(trip_id: uuid.UUID, data: UpdateTripRequest, db: DBSession, current_user: CurrentUser):
     result = await db.execute(select(Trip).where(Trip.id == trip_id))
     trip = result.scalar_one_or_none()
     if not trip:
@@ -226,11 +229,12 @@ async def update_trip(trip_id: uuid.UUID, data: UpdateTripRequest, db: DBSession
         setattr(trip, field, value)
     await db.flush()
     await db.refresh(trip)
+    await log_action(db, current_user.id, "update_trip", "trip", str(trip_id))
     return trip
 
 
 @router.put("/trips/{trip_id}/assign", dependencies=[AdminUser])
-async def assign_vehicle_driver(trip_id: uuid.UUID, data: AssignTripRequest, db: DBSession):
+async def assign_vehicle_driver(trip_id: uuid.UUID, data: AssignTripRequest, db: DBSession, current_user: CurrentUser):
     result = await db.execute(select(Trip).where(Trip.id == trip_id))
     trip = result.scalar_one_or_none()
     if not trip:
@@ -257,6 +261,7 @@ async def assign_vehicle_driver(trip_id: uuid.UUID, data: AssignTripRequest, db:
         trip.vehicle_id = data.vehicle_id
 
     await db.flush()
+    await log_action(db, current_user.id, "assign_trip", "trip", str(trip_id), {"vehicle_id": str(trip.vehicle_id), "driver_id": str(trip.driver_id)})
     return {
         "trip_id": str(trip.id),
         "vehicle_id": str(trip.vehicle_id) if trip.vehicle_id else None,
@@ -390,7 +395,7 @@ def _generate_seats_from_layout(trip_id: uuid.UUID, vehicle_type: VehicleType) -
 
 
 @router.post("/trips/generate", status_code=201, dependencies=[AdminUser])
-async def generate_trips_from_schedule(data: GenerateTripsRequest, db: DBSession):
+async def generate_trips_from_schedule(data: GenerateTripsRequest, db: DBSession, current_user: CurrentUser):
     """Generate trips for a schedule over a date range, with seat maps from vehicle type layout."""
     schedule_result = await db.execute(
         select(Schedule)
@@ -464,6 +469,7 @@ async def generate_trips_from_schedule(data: GenerateTripsRequest, db: DBSession
         current += timedelta(days=1)
 
     await db.flush()
+    await log_action(db, current_user.id, "generate_trips", "schedule", str(data.schedule_id), {"created": created, "skipped": skipped})
 
     return {
         "schedule_id": str(schedule.id),

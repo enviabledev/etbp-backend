@@ -10,7 +10,8 @@ from sqlalchemy.orm import selectinload
 from app.core.constants import UserRole
 from app.core.exceptions import ConflictError, NotFoundError
 from app.core.security import hash_password
-from app.dependencies import DBSession, require_role
+from app.dependencies import CurrentUser, DBSession, require_role
+from app.services.audit_service import log_action
 from app.models.driver import Driver
 from app.models.route import Route
 from app.models.schedule import Trip
@@ -50,7 +51,7 @@ class UpdateDriverRequest(BaseModel):
 
 
 @router.post("", status_code=201, dependencies=[AdminUser])
-async def create_driver(data: CreateDriverRequest, db: DBSession):
+async def create_driver(data: CreateDriverRequest, db: DBSession, current_user: CurrentUser):
     email_check = await db.execute(select(User).where(User.email == data.email.lower()))
     if email_check.scalar_one_or_none():
         raise ConflictError("A user with this email already exists")
@@ -81,6 +82,7 @@ async def create_driver(data: CreateDriverRequest, db: DBSession):
         select(Driver).options(selectinload(Driver.user), selectinload(Driver.assigned_terminal))
         .where(Driver.id == driver.id)
     )
+    await log_action(db, current_user.id, "create_driver", "driver", str(driver.id))
     return result.scalar_one()
 
 
@@ -188,7 +190,7 @@ async def get_driver(driver_id: uuid.UUID, db: DBSession):
 
 
 @router.put("/{driver_id}", dependencies=[AdminUser])
-async def update_driver(driver_id: uuid.UUID, data: UpdateDriverRequest, db: DBSession):
+async def update_driver(driver_id: uuid.UUID, data: UpdateDriverRequest, db: DBSession, current_user: CurrentUser):
     result = await db.execute(select(Driver).options(selectinload(Driver.user)).where(Driver.id == driver_id))
     driver = result.scalar_one_or_none()
     if not driver:
@@ -203,11 +205,12 @@ async def update_driver(driver_id: uuid.UUID, data: UpdateDriverRequest, db: DBS
         select(Driver).options(selectinload(Driver.user), selectinload(Driver.assigned_terminal))
         .where(Driver.id == driver_id)
     )
+    await log_action(db, current_user.id, "update_driver", "driver", str(driver_id))
     return result.scalar_one()
 
 
 @router.delete("/{driver_id}", dependencies=[AdminUser])
-async def delete_driver(driver_id: uuid.UUID, db: DBSession):
+async def delete_driver(driver_id: uuid.UUID, db: DBSession, current_user: CurrentUser):
     result = await db.execute(
         select(Driver).options(selectinload(Driver.user)).where(Driver.id == driver_id)
     )
@@ -219,4 +222,5 @@ async def delete_driver(driver_id: uuid.UUID, db: DBSession):
     driver.user.is_active = False
     driver.is_available = False
     await db.flush()
+    await log_action(db, current_user.id, "delete_driver", "driver", str(driver_id))
     return {"message": "Driver deactivated"}
