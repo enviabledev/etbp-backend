@@ -1,16 +1,21 @@
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, select
+from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 
-from app.core.constants import BookingStatus, UserRole
+from app.core.constants import BookingStatus, PaymentStatus, SeatStatus, UserRole
 from app.core.exceptions import BadRequestError, NotFoundError
+from app.core.security import generate_booking_reference
 from app.dependencies import CurrentUser, DBSession, require_role
 from app.services.audit_service import log_action
-from app.models.booking import Booking
-from app.models.schedule import Trip
+from app.models.booking import Booking, BookingPassenger
+from app.models.payment import Payment
+from app.models.schedule import Trip, TripSeat
+from app.models.user import User
+from app.schemas.booking import PassengerInput
 
 router = APIRouter(prefix="/bookings", tags=["Admin - Bookings"])
 
@@ -128,4 +133,180 @@ async def check_in_booking(booking_id: uuid.UUID, db: DBSession, current_user: C
         "status": booking.status,
         "checked_in_at": str(booking.checked_in_at),
         "passengers_checked_in": len(booking.passengers),
+    }
+
+
+# ── Customer Search ──
+
+
+@router.get("/customer-search", dependencies=[AdminUser])
+async def search_customer_for_booking(q: str, db: DBSession):
+    """Search for a customer by phone or email for walk-in booking."""
+    result = await db.execute(
+        select(User).where(
+            or_(User.phone == q, User.email == q),
+            User.role == "passenger",
+        )
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        return {"found": False, "user": None}
+    return {
+        "found": True,
+        "user": {
+            "id": str(user.id),
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "email": user.email,
+            "phone": user.phone,
+            "has_logged_in": getattr(user, "has_logged_in", False),
+            "is_active": user.is_active,
+        },
+    }
+
+
+# ── Create Booking for Customer ──
+
+
+class AdminCreateBookingRequest(BaseModel):
+    customer_phone: str
+    customer_email: EmailStr | None = None
+    customer_first_name: str = Field(..., max_length=100)
+    customer_last_name: str = Field(..., max_length=100)
+    trip_id: uuid.UUID
+    passengers: list[PassengerInput] = Field(..., min_length=1)
+    contact_phone: str
+    contact_email: EmailStr | None = None
+    emergency_contact_name: str | None = None
+    emergency_contact_phone: str | None = None
+    payment_method: str = "cash"
+
+
+@router.post("/create-for-customer", status_code=201, dependencies=[AdminUser])
+async def create_booking_for_customer(
+    data: AdminCreateBookingRequest, db: DBSession, current_user: CurrentUser
+):
+    """Create a booking on behalf of a walk-in customer."""
+
+    # 1. Find or create customer
+    conditions = [User.phone == data.customer_phone]
+    if data.customer_email:
+        conditions.append(User.email == data.customer_email)
+    result = await db.execute(
+        select(User).where(or_(*conditions), User.role == "passenger")
+    )
+    customer = result.scalar_one_or_none()
+    is_new = False
+
+    if not customer:
+        is_new = True
+        customer = User(
+            first_name=data.customer_first_name,
+            last_name=data.customer_last_name,
+            phone=data.customer_phone,
+            email=data.customer_email,
+            role="passenger",
+            is_active=True,
+            has_logged_in=False,
+            created_by=current_user.id,
+        )
+        db.add(customer)
+        await db.flush()
+        await db.refresh(customer)
+
+    # 2. Validate trip and seats
+    trip_result = await db.execute(select(Trip).where(Trip.id == data.trip_id))
+    trip = trip_result.scalar_one_or_none()
+    if not trip:
+        raise NotFoundError("Trip not found")
+    if trip.status not in ("scheduled", "boarding"):
+        raise BadRequestError("Trip is not available for booking")
+
+    seat_ids = [p.seat_id for p in data.passengers]
+    seats_result = await db.execute(
+        select(TripSeat).where(TripSeat.id.in_(seat_ids), TripSeat.trip_id == data.trip_id)
+    )
+    seats = {s.id: s for s in seats_result.scalars().all()}
+    if len(seats) != len(seat_ids):
+        raise BadRequestError("One or more seats not found")
+
+    for seat in seats.values():
+        if seat.status == SeatStatus.BOOKED:
+            raise BadRequestError(f"Seat {seat.seat_number} is already booked")
+
+    # 3. Create booking
+    reference = generate_booking_reference()
+    total_amount = sum(float(trip.price) + float(seats[p.seat_id].price_modifier) for p in data.passengers)
+
+    booking = Booking(
+        reference=reference,
+        user_id=customer.id,
+        trip_id=data.trip_id,
+        booked_by_user_id=current_user.id,
+        total_amount=total_amount,
+        passenger_count=len(data.passengers),
+        contact_email=data.contact_email or data.customer_email,
+        contact_phone=data.contact_phone,
+        emergency_contact_name=data.emergency_contact_name,
+        emergency_contact_phone=data.emergency_contact_phone,
+    )
+    db.add(booking)
+    await db.flush()
+
+    # 4. Create passengers and mark seats booked
+    for p in data.passengers:
+        qr_data = f"{reference}-{seats[p.seat_id].seat_number}-{p.first_name.upper()}"
+        passenger = BookingPassenger(
+            booking_id=booking.id,
+            seat_id=p.seat_id,
+            first_name=p.first_name,
+            last_name=p.last_name,
+            gender=p.gender.value if p.gender else None,
+            phone=p.phone,
+            is_primary=p.is_primary,
+            qr_code_data=qr_data,
+        )
+        db.add(passenger)
+        seat = seats[p.seat_id]
+        seat.status = SeatStatus.BOOKED
+        seat.locked_by_user_id = None
+        seat.locked_until = None
+
+    trip.available_seats -= len(data.passengers)
+
+    # 5. If cash payment, confirm immediately
+    if data.payment_method == "cash":
+        booking.status = BookingStatus.CONFIRMED
+        payment = Payment(
+            booking_id=booking.id,
+            user_id=customer.id,
+            amount=total_amount,
+            method="cash",
+            status=PaymentStatus.SUCCESSFUL.value,
+            gateway="terminal",
+            paid_at=datetime.now(timezone.utc),
+        )
+        db.add(payment)
+
+    await db.flush()
+
+    await log_action(db, current_user.id, "admin_create_booking", "booking", str(booking.id), {
+        "customer_id": str(customer.id),
+        "customer_phone": data.customer_phone,
+        "new_customer": is_new,
+        "payment_method": data.payment_method,
+    })
+
+    return {
+        "booking": {
+            "id": str(booking.id),
+            "reference": reference,
+            "status": booking.status,
+            "total_amount": total_amount,
+        },
+        "customer": {
+            "id": str(customer.id),
+            "is_new": is_new,
+            "name": f"{customer.first_name} {customer.last_name}",
+        },
     }

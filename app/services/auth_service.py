@@ -21,18 +21,50 @@ from app.schemas.user import UserResponse, UserUpdateRequest
 
 
 async def register_user(db: AsyncSession, data: RegisterRequest) -> TokenResponse:
-    existing = await db.execute(
-        select(User).where(User.email == data.email.lower())
+    from sqlalchemy import or_
+
+    # Check for existing user (might be admin-created walk-in customer)
+    conditions = [User.email == data.email.lower()]
+    if data.phone:
+        conditions.append(User.phone == data.phone)
+
+    existing_q = await db.execute(
+        select(User).where(or_(*conditions))
     )
-    if existing.scalar_one_or_none():
-        raise ConflictError("A user with this email already exists")
+    existing_user = existing_q.scalar_one_or_none()
+
+    if existing_user:
+        if existing_user.has_logged_in:
+            # Truly existing user — reject
+            raise ConflictError("An account with this email or phone already exists. Please login instead.")
+
+        # Admin-created user who never logged in — let them claim the account
+        existing_user.password_hash = hash_password(data.password)
+        existing_user.has_logged_in = True
+        existing_user.email = data.email.lower()
+        if data.first_name:
+            existing_user.first_name = data.first_name
+        if data.last_name:
+            existing_user.last_name = data.last_name
+        if data.phone:
+            existing_user.phone = data.phone
+        await db.flush()
+
+        token_data = {"sub": str(existing_user.id), "role": existing_user.role}
+        access_token = create_access_token(token_data)
+        refresh_token = create_refresh_token(token_data)
+
+        rt = RefreshToken(
+            user_id=existing_user.id,
+            token_hash=hash_token(refresh_token),
+            expires_at=datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expire_days),
+        )
+        db.add(rt)
+        await db.flush()
+
+        return TokenResponse(access_token=access_token, refresh_token=refresh_token)
 
     if data.phone:
-        phone_exists = await db.execute(
-            select(User).where(User.phone == data.phone)
-        )
-        if phone_exists.scalar_one_or_none():
-            raise ConflictError("A user with this phone number already exists")
 
         # Verify phone was confirmed via OTP (skip in dev if no Redis)
         try:
@@ -94,8 +126,10 @@ async def login_user(db: AsyncSession, data: LoginRequest) -> TokenResponse:
     if not user.is_active:
         raise UnauthorizedError("Account is deactivated")
 
-    # Update last login
+    # Update last login and mark as logged in
     user.last_login_at = datetime.now(timezone.utc)
+    if not user.has_logged_in:
+        user.has_logged_in = True
 
     # Create tokens
     token_data = {"sub": str(user.id), "role": user.role}

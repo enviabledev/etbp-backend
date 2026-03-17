@@ -22,6 +22,7 @@ class UserResponse(BaseSchema):
     emergency_contact_phone: str | None = None
     email_verified: bool
     phone_verified: bool
+    has_logged_in: bool = False
     is_active: bool
     last_login_at: datetime | None
     created_at: datetime
