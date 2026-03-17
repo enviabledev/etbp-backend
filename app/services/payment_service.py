@@ -59,8 +59,16 @@ async def verify_payment_by_reference(
                 payment.gateway_response = paystack_data
                 payment.paid_at = datetime.now(timezone.utc)
 
-                # Also confirm the booking
-                if payment.booking_id:
+                if payment.booking_id is None:
+                    # Wallet top-up — credit wallet
+                    await process_wallet_topup(
+                        db,
+                        user_id=payment.user_id,
+                        amount=float(payment.amount),
+                        reference=payment.gateway_reference or str(payment.id),
+                    )
+                elif payment.booking_id:
+                    # Booking payment — confirm the booking
                     booking_result = await db.execute(
                         select(Booking).where(Booking.id == payment.booking_id)
                     )
@@ -192,6 +200,21 @@ async def handle_paystack_webhook(
     payment.gateway_response = data
     payment.paid_at = datetime.now(timezone.utc)
 
+    # Wallet top-up: no booking_id, credit the wallet and return
+    if payment.booking_id is None:
+        metadata = data.get("metadata", {})
+        if metadata.get("type") == "wallet_topup" or (
+            payment.gateway_reference and payment.gateway_reference.startswith("wt-")
+        ):
+            await process_wallet_topup(
+                db,
+                user_id=payment.user_id,
+                amount=float(payment.amount),
+                reference=payment.gateway_reference or str(payment.id),
+            )
+        await db.flush()
+        return
+
     from app.models.schedule import Trip as TripModel
 
     booking_result = await db.execute(
@@ -292,35 +315,37 @@ async def initiate_wallet_topup(
 ) -> dict:
     wallet = await get_or_create_wallet(db, user_id)
 
-    # Create a Payment record with no booking
-    # We'll use a special reference prefix for topups
     from app.models.user import User
-
     user_result = await db.execute(select(User).where(User.id == user_id))
     user = user_result.scalar_one()
 
+    # Create a Payment record so the webhook can find it
     payment = Payment(
         booking_id=None,
         user_id=user_id,
         amount=amount,
-        method=PaymentMethod.CARD,
+        method=PaymentMethod.CARD.value,
         gateway="paystack",
     )
-    # booking_id is required in current model, so we need a workaround
-    # Actually booking_id is NOT NULL in the model. Let's handle wallet topups
-    # differently — store the intent and process in webhook
+    db.add(payment)
+    await db.flush()
+
+    reference = f"wt-{payment.id}"
+
     client = paystack_client or PaystackClient()
-    reference = f"wt-{uuid.uuid4()}"
     result = await client.initialize_transaction(
         email=user.email or "",
         amount=int(amount * 100),
         reference=reference,
         callback_url=callback_url,
-        metadata={"type": "wallet_topup", "user_id": str(user_id)},
+        metadata={"type": "wallet_topup", "user_id": str(user_id), "wallet_id": str(wallet.id)},
     )
 
+    payment.gateway_reference = result.get("reference", reference)
+    await db.flush()
+
     return {
-        "payment_id": uuid.uuid4(),  # placeholder
+        "payment_id": payment.id,
         "authorization_url": result.get("authorization_url", ""),
         "reference": result.get("reference", reference),
     }
@@ -329,7 +354,14 @@ async def initiate_wallet_topup(
 async def process_wallet_topup(
     db: AsyncSession, user_id: uuid.UUID, amount: float, reference: str
 ) -> None:
-    """Credit wallet after successful Paystack payment for top-up."""
+    """Credit wallet after successful Paystack payment for top-up.
+    Idempotent: skips if this reference was already processed."""
+    existing = await db.execute(
+        select(WalletTransaction).where(WalletTransaction.reference == reference)
+    )
+    if existing.scalar_one_or_none():
+        return  # Already processed
+
     wallet = await get_or_create_wallet(db, user_id)
     wallet.balance = float(wallet.balance) + amount
 
