@@ -70,6 +70,38 @@ async def list_all_bookings(
     }
 
 
+@router.get("/customer-search", dependencies=[AdminUser])
+async def search_customer_for_booking(q: str = Query(..., min_length=2), *, db: DBSession):
+    """Search for a customer by phone or email for walk-in booking."""
+    cleaned = q.strip()
+    result = await db.execute(
+        select(User).where(
+            or_(
+                User.phone == cleaned,
+                User.email == cleaned,
+                User.phone.ilike(f"%{cleaned}%"),
+                User.email.ilike(f"%{cleaned}%"),
+            ),
+            User.role == "passenger",
+        )
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        return {"found": False, "user": None}
+    return {
+        "found": True,
+        "user": {
+            "id": str(user.id),
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "email": user.email,
+            "phone": user.phone,
+            "has_logged_in": getattr(user, "has_logged_in", False),
+            "is_active": user.is_active,
+        },
+    }
+
+
 @router.get("/{booking_id}", dependencies=[AdminUser])
 async def get_booking(booking_id: uuid.UUID, db: DBSession):
     result = await db.execute(
@@ -133,35 +165,6 @@ async def check_in_booking(booking_id: uuid.UUID, db: DBSession, current_user: C
         "status": booking.status,
         "checked_in_at": str(booking.checked_in_at),
         "passengers_checked_in": len(booking.passengers),
-    }
-
-
-# ── Customer Search ──
-
-
-@router.get("/customer-search", dependencies=[AdminUser])
-async def search_customer_for_booking(q: str, db: DBSession):
-    """Search for a customer by phone or email for walk-in booking."""
-    result = await db.execute(
-        select(User).where(
-            or_(User.phone == q, User.email == q),
-            User.role == "passenger",
-        )
-    )
-    user = result.scalar_one_or_none()
-    if not user:
-        return {"found": False, "user": None}
-    return {
-        "found": True,
-        "user": {
-            "id": str(user.id),
-            "first_name": user.first_name,
-            "last_name": user.last_name,
-            "email": user.email,
-            "phone": user.phone,
-            "has_logged_in": getattr(user, "has_logged_in", False),
-            "is_active": user.is_active,
-        },
     }
 
 
