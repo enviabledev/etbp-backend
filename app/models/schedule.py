@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime, time, timezone
 
 from sqlalchemy import (
-    Boolean, DateTime, Enum, Float, Integer, Numeric, String, Text, Time,
+    Boolean, DateTime, Enum, Float, Integer, JSON, Numeric, String, Text, Time,
     ForeignKey, UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID
@@ -72,6 +72,7 @@ class Trip(TimestampMixin, Base):
     available_seats: Mapped[int] = mapped_column(Integer, nullable=False)
     total_seats: Mapped[int] = mapped_column(Integer, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
+    inspection_data: Mapped[dict | None] = mapped_column(JSON)
 
     schedule: Mapped["Schedule | None"] = relationship(back_populates="trips")
     route: Mapped["Route"] = relationship(back_populates="trips")  # noqa: F821
@@ -81,6 +82,7 @@ class Trip(TimestampMixin, Base):
         back_populates="trip", cascade="all, delete-orphan"
     )
     bookings: Mapped[list["Booking"]] = relationship(back_populates="trip")  # noqa: F821
+    incidents: Mapped[list["TripIncident"]] = relationship(back_populates="trip", cascade="all, delete-orphan")
 
 
 class TripSeat(Base):
@@ -111,3 +113,28 @@ class TripSeat(Base):
     )
 
     trip: Mapped["Trip"] = relationship(back_populates="seats")
+
+
+class TripIncident(Base):
+    __tablename__ = "trip_incidents"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    trip_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("trips.id", ondelete="CASCADE"), nullable=False
+    )
+    driver_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("drivers.id"), nullable=False
+    )
+    type: Mapped[str] = mapped_column(String(50), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    severity: Mapped[str] = mapped_column(String(10), default="low", server_default="low")
+    reported_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolution_notes: Mapped[str | None] = mapped_column(Text)
+
+    trip: Mapped["Trip"] = relationship(back_populates="incidents")
+    driver: Mapped["Driver"] = relationship()  # noqa: F821

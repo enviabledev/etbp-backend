@@ -12,7 +12,7 @@ from app.dependencies import CurrentUser, DBSession
 from app.models.booking import Booking, BookingPassenger
 from app.models.driver import Driver
 from app.models.route import Route
-from app.models.schedule import Trip, TripSeat
+from app.models.schedule import Trip, TripIncident, TripSeat
 from app.models.user import User
 
 router = APIRouter(prefix="/driver", tags=["Driver"])
@@ -313,3 +313,123 @@ async def checkin_passenger(
         "status": booking.status,
         "checked_in_at": str(booking.checked_in_at),
     }
+
+
+# ── Incidents ──
+
+
+class ReportIncidentRequest(BaseModel):
+    type: str  # breakdown, accident, passenger_issue, road_blockage, delay, other
+    description: str | None = None
+    severity: str = "low"  # low, medium, high
+
+
+@router.post("/trips/{trip_id}/incidents", status_code=201)
+async def report_incident(
+    trip_id: uuid.UUID, data: ReportIncidentRequest, db: DBSession, driver: Driver = DriverDep
+):
+    trip_q = await db.execute(select(Trip.driver_id).where(Trip.id == trip_id))
+    trip_driver = trip_q.scalar_one_or_none()
+    if trip_driver is None:
+        raise NotFoundError("Trip not found")
+    if trip_driver != driver.id:
+        raise ForbiddenError("This trip is not assigned to you")
+
+    incident = TripIncident(
+        trip_id=trip_id,
+        driver_id=driver.id,
+        type=data.type,
+        description=data.description,
+        severity=data.severity,
+    )
+    db.add(incident)
+    await db.flush()
+
+    return {
+        "id": str(incident.id),
+        "type": incident.type,
+        "severity": incident.severity,
+        "reported_at": str(incident.reported_at),
+    }
+
+
+@router.get("/trips/{trip_id}/incidents")
+async def list_trip_incidents(trip_id: uuid.UUID, db: DBSession, driver: Driver = DriverDep):
+    trip_q = await db.execute(select(Trip.driver_id).where(Trip.id == trip_id))
+    trip_driver = trip_q.scalar_one_or_none()
+    if trip_driver is None:
+        raise NotFoundError("Trip not found")
+    if trip_driver != driver.id:
+        raise ForbiddenError("This trip is not assigned to you")
+
+    result = await db.execute(
+        select(TripIncident).where(TripIncident.trip_id == trip_id).order_by(TripIncident.reported_at.desc())
+    )
+    incidents = result.scalars().all()
+    return {
+        "items": [
+            {
+                "id": str(i.id),
+                "type": i.type,
+                "description": i.description,
+                "severity": i.severity,
+                "reported_at": str(i.reported_at),
+                "resolved_at": str(i.resolved_at) if i.resolved_at else None,
+            }
+            for i in incidents
+        ]
+    }
+
+
+# ── Pre-trip Inspection ──
+
+
+INSPECTION_ITEMS = [
+    "tyres", "brakes", "lights", "oil", "coolant", "ac",
+    "mirrors", "horn", "fire_extinguisher", "first_aid_kit", "seat_belts",
+]
+
+
+class InspectionItem(BaseModel):
+    name: str
+    status: str  # pass, fail
+    notes: str | None = None
+
+
+class SubmitInspectionRequest(BaseModel):
+    items: list[InspectionItem]
+
+
+@router.post("/trips/{trip_id}/inspection")
+async def submit_inspection(
+    trip_id: uuid.UUID, data: SubmitInspectionRequest, db: DBSession, driver: Driver = DriverDep
+):
+    result = await db.execute(select(Trip).where(Trip.id == trip_id))
+    trip = result.scalar_one_or_none()
+    if not trip:
+        raise NotFoundError("Trip not found")
+    if trip.driver_id != driver.id:
+        raise ForbiddenError("This trip is not assigned to you")
+
+    inspection = {
+        "inspected_at": str(datetime.now(timezone.utc)),
+        "driver_id": str(driver.id),
+        "items": [{"name": item.name, "status": item.status, "notes": item.notes} for item in data.items],
+        "passed": all(item.status == "pass" for item in data.items),
+    }
+    trip.inspection_data = inspection
+    await db.flush()
+
+    return inspection
+
+
+@router.get("/trips/{trip_id}/inspection")
+async def get_inspection(trip_id: uuid.UUID, db: DBSession, driver: Driver = DriverDep):
+    result = await db.execute(select(Trip).where(Trip.id == trip_id))
+    trip = result.scalar_one_or_none()
+    if not trip:
+        raise NotFoundError("Trip not found")
+    if trip.driver_id != driver.id:
+        raise ForbiddenError("This trip is not assigned to you")
+
+    return trip.inspection_data or {"items": [], "passed": False, "inspected_at": None}
