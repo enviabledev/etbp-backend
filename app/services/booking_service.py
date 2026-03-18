@@ -5,13 +5,33 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+import logging
+
 from app.core.constants import BookingStatus, PaymentStatus, SeatStatus
 from app.core.exceptions import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 from app.core.security import generate_booking_reference
+
+logger = logging.getLogger(__name__)
 from app.models.booking import Booking, BookingPassenger
 from app.models.payment import Payment, PromoCode
 from app.models.schedule import Trip, TripSeat
 from app.schemas.booking import BookingDetailResponse, CreateBookingRequest
+
+
+def _calc_payment_deadline(created_at: datetime, departure_dt: datetime, method: str | None) -> datetime:
+    """Calculate payment deadline based on method and trip departure."""
+    if method == "pay_at_terminal":
+        time_to_departure = departure_dt - created_at
+        # Trip departs in less than 15 minutes: give 10 minutes
+        if time_to_departure < timedelta(minutes=15):
+            return created_at + timedelta(minutes=10)
+        # Trip departs in less than 1 hour: 15 minutes before departure
+        if time_to_departure < timedelta(hours=1):
+            return departure_dt - timedelta(minutes=15)
+        # Normal: min(3 hours, 1 hour before departure)
+        return min(created_at + timedelta(hours=3), departure_dt - timedelta(hours=1))
+    # Online payments (card, wallet, etc.): 15 min
+    return created_at + timedelta(minutes=15)
 
 
 async def create_booking(
@@ -73,6 +93,12 @@ async def create_booking(
         for p in data.passengers
     )
 
+    # Calculate payment deadline
+    method = getattr(data, "payment_method", None)
+    now = datetime.now(timezone.utc)
+    departure_dt = datetime.combine(trip.departure_date, trip.departure_time, tzinfo=timezone.utc)
+    payment_deadline = _calc_payment_deadline(now, departure_dt, method)
+
     booking = Booking(
         reference=reference,
         user_id=user_id,
@@ -85,9 +111,16 @@ async def create_booking(
         emergency_contact_name=data.emergency_contact_name,
         emergency_contact_phone=data.emergency_contact_phone,
         special_requests=data.special_requests,
+        payment_method_hint=method,
+        payment_deadline=payment_deadline,
     )
     db.add(booking)
     await db.flush()
+
+    logger.info(
+        "Created booking %s: payment_method=%s, deadline=%s",
+        reference, method, payment_deadline,
+    )
 
     # Create passengers with QR codes, mark seats booked
     for p in data.passengers:

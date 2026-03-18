@@ -32,6 +32,7 @@ class CreateBookingRequest(BaseModel):
     emergency_contact_phone: str | None = Field(None, max_length=20)
     special_requests: str | None = None
     promo_code: str | None = None
+    payment_method: str | None = None  # card, wallet, pay_at_terminal
 
     @field_validator("contact_phone", "emergency_contact_phone")
     @classmethod

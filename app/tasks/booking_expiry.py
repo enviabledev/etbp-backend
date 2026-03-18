@@ -69,6 +69,12 @@ async def expire_pending_bookings() -> int:
                         .values(available_seats=Trip.available_seats + len(seat_ids))
                     )
 
+                logger.info(
+                    "Expired booking %s: deadline=%s, method=%s",
+                    booking.reference,
+                    "set" if booking.payment_deadline else "default 15min",
+                    booking.payment_method_hint or "unknown",
+                )
                 expired_count += 1
 
             await db.commit()

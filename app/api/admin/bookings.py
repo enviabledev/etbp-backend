@@ -133,16 +133,15 @@ VALID_TRANSITIONS = {
 def _calc_payment_deadline(created_at: datetime, departure_dt: datetime, method: str | None) -> datetime:
     """Calculate payment deadline based on method and trip departure."""
     if method == "pay_at_terminal":
-        # 48h or 1h before departure, whichever is sooner
-        deadline_48h = created_at + timedelta(hours=48)
-        deadline_before_dep = departure_dt - timedelta(hours=1)
-        # But if trip departs in < 2h, give at least 30 min
-        if departure_dt - created_at < timedelta(hours=2):
-            deadline_before_dep = departure_dt - timedelta(minutes=30)
-        # If trip departs in < 30 min, give 15 min
-        if departure_dt - created_at < timedelta(minutes=30):
-            return created_at + timedelta(minutes=15)
-        return min(deadline_48h, deadline_before_dep)
+        time_to_departure = departure_dt - created_at
+        # Trip departs in less than 15 minutes: give 10 minutes
+        if time_to_departure < timedelta(minutes=15):
+            return created_at + timedelta(minutes=10)
+        # Trip departs in less than 1 hour: 15 minutes before departure
+        if time_to_departure < timedelta(hours=1):
+            return departure_dt - timedelta(minutes=15)
+        # Normal: min(3 hours, 1 hour before departure)
+        return min(created_at + timedelta(hours=3), departure_dt - timedelta(hours=1))
     # Online payments: 15 min
     return created_at + timedelta(minutes=15)
 
