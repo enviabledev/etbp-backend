@@ -172,6 +172,27 @@ ALTER TABLE bookings ADD COLUMN IF NOT EXISTS rescheduled_at TIMESTAMPTZ;
 ALTER TABLE routes ADD COLUMN IF NOT EXISTS extra_luggage_price DECIMAL(12,2) DEFAULT 2000.00;
 
 -- ═══════════════════════════════════════════════════════
+-- PROMO USAGES TABLE
+-- ═══════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS promo_usages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    promo_id UUID NOT NULL REFERENCES promo_codes(id),
+    user_id UUID NOT NULL REFERENCES users(id),
+    booking_id UUID REFERENCES bookings(id),
+    discount_applied DECIMAL(12,2) NOT NULL,
+    used_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_promo_usages_promo ON promo_usages(promo_id);
+CREATE INDEX IF NOT EXISTS idx_promo_usages_user ON promo_usages(user_id);
+
+-- ═══════════════════════════════════════════════════════
+-- BOOKINGS TABLE — price breakdown
+-- ═══════════════════════════════════════════════════════
+
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS price_breakdown JSONB;
+
+-- ═══════════════════════════════════════════════════════
 -- Confirm success
 -- ═══════════════════════════════════════════════════════
 

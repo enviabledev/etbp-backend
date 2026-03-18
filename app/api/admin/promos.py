@@ -128,3 +128,36 @@ async def deactivate_promo(promo_id: uuid.UUID, db: DBSession, current_user: Cur
     await db.flush()
     await log_action(db, current_user.id, "deactivate_promo", "promo", str(promo_id))
     return {"id": str(promo.id), "code": promo.code, "is_active": promo.is_active}
+
+
+@router.get("/{promo_id}/usage", dependencies=[AdminUser])
+async def get_promo_usage(promo_id: uuid.UUID, db: DBSession):
+    from app.models.promo_usage import PromoUsage
+    from app.models.user import User
+
+    result = await db.execute(
+        select(PromoUsage, User.first_name, User.last_name, User.email)
+        .join(User, PromoUsage.user_id == User.id)
+        .where(PromoUsage.promo_id == promo_id)
+        .order_by(PromoUsage.used_at.desc())
+        .limit(50)
+    )
+    items = []
+    for row in result.all():
+        usage = row[0]
+        items.append({
+            "id": str(usage.id),
+            "user_name": f"{row[1]} {row[2]}",
+            "user_email": row[3],
+            "discount_applied": float(usage.discount_applied),
+            "booking_id": str(usage.booking_id) if usage.booking_id else None,
+            "used_at": str(usage.used_at),
+        })
+
+    # Total discount given
+    total_q = await db.execute(
+        select(func.sum(PromoUsage.discount_applied)).where(PromoUsage.promo_id == promo_id)
+    )
+    total_discount = float(total_q.scalar() or 0)
+
+    return {"items": items, "total_discount": total_discount, "usage_count": len(items)}

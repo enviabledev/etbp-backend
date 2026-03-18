@@ -565,6 +565,15 @@ async def apply_promo_code(
 
     booking.total_amount = new_total
     promo.used_count += 1
+
+    from app.models.promo_usage import PromoUsage
+    usage = PromoUsage(
+        promo_id=promo.id,
+        user_id=user_id,
+        booking_id=booking.id,
+        discount_applied=discount,
+    )
+    db.add(usage)
     await db.flush()
 
     return {

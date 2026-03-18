@@ -164,3 +164,32 @@ async def deactivate_pricing_rule(rule_id: uuid.UUID, db: DBSession):
     rule.is_active = False
     await db.flush()
     return {"id": str(rule.id), "is_active": False}
+
+
+@router.post("/pricing-rules/simulate", dependencies=[AdminUser])
+async def simulate_pricing(db: DBSession, route_id: uuid.UUID = None, departure_date: str = None, departure_time: str = None):
+    """Simulate pricing for a hypothetical trip."""
+    from app.services.dynamic_pricing_service import calculate_trip_price
+    from datetime import date as date_cls, time as time_cls
+
+    class FakeTrip:
+        pass
+
+    trip = FakeTrip()
+    trip.route_id = route_id
+    trip.departure_date = date_cls.fromisoformat(departure_date) if departure_date else date_cls.today()
+    trip.departure_time = time_cls.fromisoformat(departure_time) if departure_time else time_cls(8, 0)
+    trip.available_seats = 20
+    trip.total_seats = 40
+
+    # Get base price from route
+    base_price = 10000.0
+    if route_id:
+        from app.models.route import Route
+        route_q = await db.execute(select(Route.base_price).where(Route.id == route_id))
+        bp = route_q.scalar_one_or_none()
+        if bp:
+            base_price = float(bp)
+
+    result = await calculate_trip_price(db, trip, base_price)
+    return result
