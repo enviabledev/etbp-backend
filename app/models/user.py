@@ -59,8 +59,12 @@ class User(TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
     )
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    assigned_terminal_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("terminals.id"), nullable=True
+    )
 
     # Relationships
+    assigned_terminal: Mapped["Terminal | None"] = relationship()  # noqa: F821
     refresh_tokens: Mapped[list["RefreshToken"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     bookings: Mapped[list["Booking"]] = relationship(  # noqa: F821
         back_populates="user", foreign_keys="Booking.user_id"
