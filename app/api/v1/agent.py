@@ -537,3 +537,139 @@ async def agent_history(db: DBSession, agent: AgentContext = AgentDep, date_filt
         "total_revenue": total_revenue,
         "count": len(bookings),
     }
+
+
+# ── Shift Report ──
+
+
+@router.get("/shift-report")
+async def shift_report(db: DBSession, agent: AgentContext = AgentDep, report_date: date | None = None):
+    target = report_date or date.today()
+
+    # All bookings by this agent on the target date
+    result = await db.execute(
+        select(Booking).options(
+            selectinload(Booking.trip).selectinload(Trip.route),
+            selectinload(Booking.payments),
+        ).where(
+            Booking.booked_by_user_id == agent.user_id,
+            func.date(Booking.created_at) == target,
+        ).order_by(Booking.created_at.asc())
+    )
+    bookings = result.scalars().all()
+
+    revenue = {"cash": 0.0, "pos": 0.0, "transfer": 0.0, "other": 0.0, "total": 0.0}
+    total_passengers = 0
+    booking_items = []
+    cancellations = []
+
+    for b in bookings:
+        if b.status == "cancelled":
+            cancellations.append({
+                "reference": b.reference, "route_name": b.trip.route.name if b.trip and b.trip.route else None,
+                "amount": float(b.total_amount), "cancelled_at": str(b.cancelled_at) if b.cancelled_at else None,
+            })
+            continue
+
+        amount = float(b.total_amount)
+        payment = next((p for p in (b.payments or []) if p.status in ("successful", "completed")), None)
+        method = payment.method if payment else "cash"
+        if method in revenue:
+            revenue[method] += amount
+        else:
+            revenue["other"] += amount
+        revenue["total"] += amount
+        total_passengers += b.passenger_count
+
+        booking_items.append({
+            "reference": b.reference, "route_name": b.trip.route.name if b.trip and b.trip.route else None,
+            "passengers": b.passenger_count, "amount": amount,
+            "payment_method": method, "created_at": str(b.created_at),
+        })
+
+    # Check-ins by this agent (approximate — bookings checked in that were booked by this agent)
+    checkin_q = await db.execute(
+        select(func.count(Booking.id)).where(
+            Booking.booked_by_user_id == agent.user_id,
+            Booking.status == "checked_in",
+            func.date(Booking.created_at) == target,
+        )
+    )
+    total_checkins = checkin_q.scalar() or 0
+
+    start_time = str(bookings[0].created_at) if bookings else None
+    end_time = str(bookings[-1].created_at) if bookings else None
+
+    return {
+        "date": str(target),
+        "agent_name": f"{agent.user.first_name} {agent.user.last_name}",
+        "total_bookings": len(booking_items),
+        "total_passengers": total_passengers,
+        "total_checkins": total_checkins,
+        "revenue": revenue,
+        "bookings": booking_items,
+        "cancellations": cancellations,
+        "start_time": start_time,
+        "end_time": end_time,
+    }
+
+
+# ── Seat Change ──
+
+
+class ChangeSeatRequest(BaseModel):
+    booking_passenger_id: uuid.UUID
+    new_seat_id: uuid.UUID
+
+
+@router.put("/bookings/{booking_ref}/change-seat")
+async def change_seat(booking_ref: str, data: ChangeSeatRequest, db: DBSession, agent: AgentContext = AgentDep):
+    # Find passenger
+    result = await db.execute(
+        select(BookingPassenger).options(selectinload(BookingPassenger.seat))
+        .where(BookingPassenger.id == data.booking_passenger_id)
+    )
+    passenger = result.scalar_one_or_none()
+    if not passenger:
+        raise NotFoundError("Passenger not found")
+
+    # Find booking
+    booking_q = await db.execute(select(Booking).where(Booking.id == passenger.booking_id))
+    booking = booking_q.scalar_one_or_none()
+    if not booking or booking.reference.upper() != booking_ref.upper():
+        raise BadRequestError("Passenger does not belong to this booking")
+
+    # Find new seat
+    new_seat_q = await db.execute(select(TripSeat).where(TripSeat.id == data.new_seat_id, TripSeat.trip_id == booking.trip_id))
+    new_seat = new_seat_q.scalar_one_or_none()
+    if not new_seat:
+        raise NotFoundError("Seat not found on this trip")
+    if new_seat.status != SeatStatus.AVAILABLE.value:
+        raise BadRequestError(f"Seat {new_seat.seat_number} is not available")
+
+    # Release old seat
+    old_seat = passenger.seat
+    if old_seat:
+        old_seat.status = SeatStatus.AVAILABLE.value
+        old_seat.locked_by_user_id = None
+
+    # Assign new seat
+    new_seat.status = SeatStatus.BOOKED.value
+    passenger.seat_id = data.new_seat_id
+
+    # Update QR code
+    passenger.qr_code_data = f"{booking.reference}-{new_seat.seat_number}-{passenger.first_name.upper()}"
+
+    await db.flush()
+    await log_action(db, agent.user_id, "agent_change_seat", "booking", str(booking.id), {
+        "passenger": f"{passenger.first_name} {passenger.last_name}",
+        "old_seat": old_seat.seat_number if old_seat else None,
+        "new_seat": new_seat.seat_number,
+    })
+
+    return {
+        "booking_ref": booking.reference,
+        "passenger": f"{passenger.first_name} {passenger.last_name}",
+        "old_seat": old_seat.seat_number if old_seat else None,
+        "new_seat": new_seat.seat_number,
+    }
