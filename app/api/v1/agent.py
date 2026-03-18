@@ -13,6 +13,7 @@ from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.core.security import generate_booking_reference, hash_password
 from app.dependencies import CurrentUser, DBSession
 from app.models.booking import Booking, BookingPassenger
+from app.models.driver import Driver
 from app.models.payment import Payment
 from app.models.route import Route
 from app.models.schedule import Trip, TripSeat
@@ -146,7 +147,7 @@ async def list_agent_trips(db: DBSession, agent: AgentContext = AgentDep):
             selectinload(Trip.route).selectinload(Route.origin_terminal),
             selectinload(Trip.route).selectinload(Route.destination_terminal),
             selectinload(Trip.vehicle).selectinload(Vehicle.vehicle_type),
-            selectinload(Trip.driver),
+            selectinload(Trip.driver).selectinload(Driver.user),
         )
         .join(Route, Route.id == Trip.route_id)
         .where(
@@ -179,7 +180,7 @@ async def list_agent_trips(db: DBSession, agent: AgentContext = AgentDep):
             "destination": trip.route.destination_terminal.city if trip.route and trip.route.destination_terminal else None,
             "vehicle_plate": trip.vehicle.plate_number if trip.vehicle else None,
             "vehicle_type": trip.vehicle.vehicle_type.name if trip.vehicle and trip.vehicle.vehicle_type else None,
-            "driver_name": f"{trip.driver.user.first_name} {trip.driver.user.last_name}" if trip.driver and hasattr(trip.driver, 'user') and trip.driver.user else None,
+            "driver_name": f"{trip.driver.user.first_name} {trip.driver.user.last_name}" if trip.driver and trip.driver.user else None,
             "booked": counts.booked,
             "checked_in": counts.checked_in,
             "total_seats": trip.total_seats,
