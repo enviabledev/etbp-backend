@@ -138,6 +138,40 @@ CREATE TABLE IF NOT EXISTS notification_campaigns (
 CREATE INDEX IF NOT EXISTS idx_notification_campaigns_status ON notification_campaigns(status);
 
 -- ═══════════════════════════════════════════════════════
+-- BOOKING ADDONS TABLE
+-- ═══════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS booking_addons (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    booking_id UUID NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
+    addon_type VARCHAR(50) NOT NULL DEFAULT 'extra_luggage',
+    quantity INTEGER NOT NULL DEFAULT 1,
+    unit_price DECIMAL(12,2) NOT NULL,
+    total_price DECIMAL(12,2) NOT NULL,
+    currency VARCHAR(10) DEFAULT 'NGN',
+    status VARCHAR(20) DEFAULT 'pending',
+    payment_id UUID REFERENCES payments(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_booking_addons_booking ON booking_addons(booking_id);
+
+-- ═══════════════════════════════════════════════════════
+-- BOOKINGS TABLE — transfer and reschedule tracking
+-- ═══════════════════════════════════════════════════════
+
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS transferred_from_user_id UUID;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS transferred_at TIMESTAMPTZ;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS rescheduled_from_trip_id UUID;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS rescheduled_at TIMESTAMPTZ;
+
+-- ═══════════════════════════════════════════════════════
+-- ROUTES TABLE — extra luggage pricing
+-- ═══════════════════════════════════════════════════════
+
+ALTER TABLE routes ADD COLUMN IF NOT EXISTS extra_luggage_price DECIMAL(12,2) DEFAULT 2000.00;
+
+-- ═══════════════════════════════════════════════════════
 -- Confirm success
 -- ═══════════════════════════════════════════════════════
 

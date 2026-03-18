@@ -59,6 +59,7 @@ class Route(TimestampMixin, Base):
     currency: Mapped[str] = mapped_column(String(3), default="NGN", server_default="NGN")
     luggage_policy: Mapped[str | None] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    extra_luggage_price: Mapped[float | None] = mapped_column(Numeric(12, 2))
 
     origin_terminal: Mapped["Terminal"] = relationship(
         back_populates="origin_routes", foreign_keys=[origin_terminal_id]

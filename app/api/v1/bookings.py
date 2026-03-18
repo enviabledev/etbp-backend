@@ -10,6 +10,7 @@ from app.core.exceptions import ForbiddenError, NotFoundError
 from app.dependencies import CurrentUser, DBSession
 from app.models.booking import Booking
 from app.schemas.booking import (
+    AddLuggageRequest,
     ApplyPromoRequest,
     ApplyPromoResponse,
     BookingDetailResponse,
@@ -18,6 +19,7 @@ from app.schemas.booking import (
     CancelBookingResponse,
     CreateBookingRequest,
     RescheduleRequest,
+    TransferRequest,
 )
 from app.services import booking_service, ticket_service
 
@@ -86,6 +88,39 @@ async def list_my_bookings(
     items = result.scalars().all()
 
     return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+@router.get("/{reference}/reschedule-options")
+async def get_reschedule_options_endpoint(
+    reference: str, db: DBSession, current_user: CurrentUser
+):
+    return await booking_service.get_reschedule_options(db, current_user.id, reference)
+
+
+@router.post("/{reference}/transfer")
+async def transfer_booking_endpoint(
+    reference: str, data: TransferRequest, db: DBSession, current_user: CurrentUser
+):
+    return await booking_service.transfer_booking(
+        db, current_user.id, reference,
+        data.recipient_phone, data.recipient_name, data.recipient_email,
+    )
+
+
+@router.post("/{reference}/add-luggage")
+async def add_luggage_endpoint(
+    reference: str, data: AddLuggageRequest, db: DBSession, current_user: CurrentUser
+):
+    return await booking_service.add_luggage(
+        db, current_user.id, reference, data.quantity, data.payment_method,
+    )
+
+
+@router.get("/{reference}/addons")
+async def get_addons_endpoint(
+    reference: str, db: DBSession, current_user: CurrentUser
+):
+    return await booking_service.get_booking_addons(db, reference, current_user.id)
 
 
 @router.get("/{reference}", response_model=BookingDetailResponse)

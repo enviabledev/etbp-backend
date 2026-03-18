@@ -184,3 +184,14 @@ class ApplyPromoResponse(BaseSchema):
     discount_amount: float
     new_total: float
     promo_code: str
+
+
+class TransferRequest(BaseModel):
+    recipient_phone: str = Field(..., max_length=20)
+    recipient_name: str = Field(..., max_length=200)
+    recipient_email: EmailStr | None = None
+
+
+class AddLuggageRequest(BaseModel):
+    quantity: int = Field(..., ge=1, le=10)
+    payment_method: str = "wallet"

@@ -53,6 +53,11 @@ class Booking(TimestampMixin, Base):
     reminder_24h_sent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     reminder_1h_sent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
+    transferred_from_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    transferred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    rescheduled_from_trip_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    rescheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     user: Mapped["User"] = relationship(  # noqa: F821
         back_populates="bookings", foreign_keys=[user_id]
     )
