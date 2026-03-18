@@ -283,6 +283,15 @@ async def update_trip_status(
         trip.actual_departure_at = datetime.now(timezone.utc)
     elif data.status in ("arrived", "completed"):
         trip.actual_arrival_at = datetime.now(timezone.utc)
+        if data.status == "completed":
+            trip.completed_at = datetime.now(timezone.utc)
+            try:
+                from app.services.trip_summary_service import generate_trip_summary
+                summary = await generate_trip_summary(db, trip_id)
+                trip.summary_data = summary
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning("Summary generation failed: %s", e)
 
     await db.flush()
 
@@ -509,3 +518,19 @@ async def get_inspection(trip_id: uuid.UUID, db: DBSession, driver: Driver = Dri
         raise ForbiddenError("This trip is not assigned to you")
 
     return trip.inspection_data or {"items": [], "passed": False, "inspected_at": None}
+
+
+@router.get("/trips/{trip_id}/summary")
+async def get_trip_summary(trip_id: uuid.UUID, db: DBSession, driver: Driver = DriverDep):
+    trip_q = await db.execute(select(Trip).where(Trip.id == trip_id))
+    trip = trip_q.scalar_one_or_none()
+    if not trip:
+        raise NotFoundError("Trip not found")
+    if trip.driver_id != driver.id:
+        raise ForbiddenError("This trip is not assigned to you")
+    if trip.status != "completed":
+        raise BadRequestError("Trip is not completed yet")
+    if trip.summary_data:
+        return trip.summary_data
+    from app.services.trip_summary_service import generate_trip_summary
+    return await generate_trip_summary(db, trip_id)

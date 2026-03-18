@@ -193,6 +193,50 @@ CREATE INDEX IF NOT EXISTS idx_promo_usages_user ON promo_usages(user_id);
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS price_breakdown JSONB;
 
 -- ═══════════════════════════════════════════════════════
+-- REVIEWS TABLE (drop old if exists, create full version)
+-- ═══════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS trip_reviews (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    booking_id UUID NOT NULL UNIQUE REFERENCES bookings(id),
+    user_id UUID NOT NULL REFERENCES users(id),
+    trip_id UUID NOT NULL REFERENCES trips(id),
+    driver_id UUID REFERENCES drivers(id),
+    overall_rating INTEGER NOT NULL CHECK (overall_rating BETWEEN 1 AND 5),
+    driver_rating INTEGER CHECK (driver_rating BETWEEN 1 AND 5),
+    bus_condition_rating INTEGER CHECK (bus_condition_rating BETWEEN 1 AND 5),
+    punctuality_rating INTEGER CHECK (punctuality_rating BETWEEN 1 AND 5),
+    comfort_rating INTEGER CHECK (comfort_rating BETWEEN 1 AND 5),
+    comment TEXT,
+    is_anonymous BOOLEAN DEFAULT FALSE,
+    admin_response TEXT,
+    admin_responded_at TIMESTAMPTZ,
+    admin_responded_by UUID REFERENCES users(id),
+    is_flagged BOOLEAN DEFAULT FALSE,
+    is_visible BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_reviews_trip ON trip_reviews(trip_id);
+CREATE INDEX IF NOT EXISTS idx_reviews_driver ON trip_reviews(driver_id);
+CREATE INDEX IF NOT EXISTS idx_reviews_user ON trip_reviews(user_id);
+CREATE INDEX IF NOT EXISTS idx_reviews_booking ON trip_reviews(booking_id);
+
+-- Add missing columns if table already exists
+ALTER TABLE trip_reviews ADD COLUMN IF NOT EXISTS driver_id UUID REFERENCES drivers(id);
+ALTER TABLE trip_reviews ADD COLUMN IF NOT EXISTS comfort_rating INTEGER;
+ALTER TABLE trip_reviews ADD COLUMN IF NOT EXISTS is_anonymous BOOLEAN DEFAULT FALSE;
+ALTER TABLE trip_reviews ADD COLUMN IF NOT EXISTS admin_response TEXT;
+ALTER TABLE trip_reviews ADD COLUMN IF NOT EXISTS admin_responded_at TIMESTAMPTZ;
+ALTER TABLE trip_reviews ADD COLUMN IF NOT EXISTS admin_responded_by UUID;
+ALTER TABLE trip_reviews ADD COLUMN IF NOT EXISTS is_flagged BOOLEAN DEFAULT FALSE;
+ALTER TABLE trip_reviews ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS review_prompted BOOLEAN DEFAULT FALSE;
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS summary_data JSONB;
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+
+-- ═══════════════════════════════════════════════════════
 -- Confirm success
 -- ═══════════════════════════════════════════════════════
 

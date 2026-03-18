@@ -73,6 +73,8 @@ class Trip(TimestampMixin, Base):
     total_seats: Mapped[int] = mapped_column(Integer, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
     inspection_data: Mapped[dict | None] = mapped_column(JSON)
+    summary_data: Mapped[dict | None] = mapped_column(JSON)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     schedule: Mapped["Schedule | None"] = relationship(back_populates="trips")
     route: Mapped["Route"] = relationship(back_populates="trips")  # noqa: F821

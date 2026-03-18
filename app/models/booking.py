@@ -52,6 +52,7 @@ class Booking(TimestampMixin, Base):
     checked_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reminder_24h_sent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     reminder_1h_sent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    review_prompted: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
     transferred_from_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     transferred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
