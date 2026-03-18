@@ -534,3 +534,51 @@ async def get_trip_summary(trip_id: uuid.UUID, db: DBSession, driver: Driver = D
         return trip.summary_data
     from app.services.trip_summary_service import generate_trip_summary
     return await generate_trip_summary(db, trip_id)
+
+
+@router.get("/trips/{trip_id}/vehicle-status")
+async def get_vehicle_status(trip_id: uuid.UUID, db: DBSession, driver: Driver = DriverDep):
+    from app.models.maintenance import VehicleDocument, MaintenanceRecord
+    from datetime import date as date_cls
+
+    trip_q = await db.execute(
+        select(Trip).options(selectinload(Trip.vehicle)).where(Trip.id == trip_id)
+    )
+    trip = trip_q.scalar_one_or_none()
+    if not trip:
+        raise NotFoundError("Trip not found")
+    if trip.driver_id != driver.id:
+        raise ForbiddenError("This trip is not assigned to you")
+    if not trip.vehicle:
+        return {"vehicle": None, "compliance": {}, "maintenance": {}}
+
+    vehicle = trip.vehicle
+    today = date_cls.today()
+
+    # Documents
+    docs_q = await db.execute(
+        select(VehicleDocument).where(VehicleDocument.vehicle_id == vehicle.id)
+        .order_by(VehicleDocument.expiry_date.asc())
+    )
+    compliance = {}
+    for doc in docs_q.scalars().all():
+        days_left = (doc.expiry_date - today).days
+        status = "expired" if days_left < 0 else "expiring_soon" if days_left <= 30 else "valid"
+        compliance[doc.document_type] = {"status": status, "expiry_date": str(doc.expiry_date)}
+
+    # Last maintenance
+    last_q = await db.execute(
+        select(MaintenanceRecord).where(
+            MaintenanceRecord.vehicle_id == vehicle.id, MaintenanceRecord.status == "completed"
+        ).order_by(MaintenanceRecord.completed_at.desc()).limit(1)
+    )
+    last = last_q.scalar_one_or_none()
+
+    return {
+        "vehicle": {"plate_number": vehicle.plate_number},
+        "compliance": compliance,
+        "maintenance": {
+            "last_service_date": str(last.completed_at.date()) if last and last.completed_at else None,
+            "next_service_due": str(last.next_service_due_date) if last and last.next_service_due_date else None,
+        },
+    }

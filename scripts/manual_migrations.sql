@@ -255,6 +255,79 @@ UPDATE terminals SET latitude = 6.3350, longitude = 5.6037 WHERE name ILIKE '%Be
 UPDATE terminals SET latitude = 4.8156, longitude = 7.0498 WHERE name ILIKE '%Port Harcourt%' AND latitude IS NULL;
 
 -- ═══════════════════════════════════════════════════════
+-- MAINTENANCE RECORDS TABLE
+-- ═══════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS maintenance_records (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    vehicle_id UUID NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+    maintenance_type VARCHAR(50) NOT NULL,
+    title VARCHAR(200) NOT NULL,
+    description TEXT,
+    status VARCHAR(20) NOT NULL DEFAULT 'scheduled',
+    priority VARCHAR(20) NOT NULL DEFAULT 'medium',
+    scheduled_date DATE NOT NULL,
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    mileage_at_service DECIMAL(12,2),
+    cost DECIMAL(12,2),
+    currency VARCHAR(10) DEFAULT 'NGN',
+    vendor_name VARCHAR(200),
+    vendor_contact VARCHAR(100),
+    parts_replaced JSONB,
+    notes TEXT,
+    next_service_due_date DATE,
+    next_service_due_mileage DECIMAL(12,2),
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_maintenance_records_vehicle ON maintenance_records(vehicle_id);
+CREATE INDEX IF NOT EXISTS idx_maintenance_records_status ON maintenance_records(status);
+CREATE INDEX IF NOT EXISTS idx_maintenance_records_scheduled ON maintenance_records(scheduled_date);
+
+-- ═══════════════════════════════════════════════════════
+-- MAINTENANCE SCHEDULES TABLE
+-- ═══════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS maintenance_schedules (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    vehicle_type_id UUID REFERENCES vehicle_types(id),
+    vehicle_id UUID REFERENCES vehicles(id),
+    maintenance_type VARCHAR(50) NOT NULL,
+    title VARCHAR(200) NOT NULL,
+    interval_km INTEGER,
+    interval_days INTEGER,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ═══════════════════════════════════════════════════════
+-- VEHICLE DOCUMENTS TABLE
+-- ═══════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS vehicle_documents (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    vehicle_id UUID NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+    document_type VARCHAR(50) NOT NULL,
+    document_number VARCHAR(100),
+    issued_date DATE,
+    expiry_date DATE NOT NULL,
+    status VARCHAR(20) DEFAULT 'valid',
+    notes TEXT,
+    alert_30d_sent BOOLEAN DEFAULT FALSE,
+    alert_7d_sent BOOLEAN DEFAULT FALSE,
+    alert_expired_sent BOOLEAN DEFAULT FALSE,
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_vehicle_documents_vehicle ON vehicle_documents(vehicle_id);
+CREATE INDEX IF NOT EXISTS idx_vehicle_documents_expiry ON vehicle_documents(expiry_date);
+
+-- ═══════════════════════════════════════════════════════
 -- Confirm success
 -- ═══════════════════════════════════════════════════════
 
