@@ -413,6 +413,85 @@ CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS corporate_account_id UUID REFERENCES corporate_accounts(id);
 
 -- ═══════════════════════════════════════════════════════
+-- BANNERS TABLE
+-- ═══════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS banners (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    title VARCHAR(200) NOT NULL,
+    heading VARCHAR(200),
+    body_text TEXT,
+    image_url TEXT,
+    background_color VARCHAR(10),
+    text_color VARCHAR(10),
+    cta_text VARCHAR(100),
+    cta_action VARCHAR(20),
+    cta_value TEXT,
+    placement VARCHAR(50) NOT NULL DEFAULT 'home_hero',
+    target_audience VARCHAR(50) DEFAULT 'all',
+    start_date TIMESTAMPTZ NOT NULL,
+    end_date TIMESTAMPTZ NOT NULL,
+    priority INTEGER DEFAULT 0,
+    is_active BOOLEAN DEFAULT TRUE,
+    impressions INTEGER DEFAULT 0,
+    clicks INTEGER DEFAULT 0,
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_banners_placement ON banners(placement);
+
+-- ═══════════════════════════════════════════════════════
+-- EMAIL TEMPLATES TABLE
+-- ═══════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS email_templates (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(100) NOT NULL UNIQUE,
+    subject VARCHAR(500) NOT NULL,
+    body_html TEXT NOT NULL,
+    body_text TEXT,
+    variables JSONB,
+    is_active BOOLEAN DEFAULT TRUE,
+    last_edited_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ═══════════════════════════════════════════════════════
+-- LOST & FOUND REPORTS TABLE
+-- ═══════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS lost_found_reports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    report_number VARCHAR(50) NOT NULL UNIQUE,
+    reporter_user_id UUID NOT NULL REFERENCES users(id),
+    report_type VARCHAR(10) NOT NULL,
+    booking_ref VARCHAR(50),
+    trip_id UUID REFERENCES trips(id),
+    route_id UUID REFERENCES routes(id),
+    terminal_id UUID REFERENCES terminals(id),
+    item_description TEXT NOT NULL,
+    item_category VARCHAR(50) NOT NULL,
+    color VARCHAR(50),
+    distinguishing_features TEXT,
+    date_lost_found DATE NOT NULL,
+    location_details TEXT,
+    contact_phone VARCHAR(50) NOT NULL,
+    contact_email VARCHAR(200),
+    status VARCHAR(20) NOT NULL DEFAULT 'reported',
+    assigned_to UUID REFERENCES users(id),
+    resolution_notes TEXT,
+    resolved_at TIMESTAMPTZ,
+    images JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_lost_found_reporter ON lost_found_reports(reporter_user_id);
+CREATE INDEX IF NOT EXISTS idx_lost_found_terminal ON lost_found_reports(terminal_id);
+CREATE INDEX IF NOT EXISTS idx_lost_found_status ON lost_found_reports(status);
+
+-- ═══════════════════════════════════════════════════════
 -- Confirm success
 -- ═══════════════════════════════════════════════════════
 
