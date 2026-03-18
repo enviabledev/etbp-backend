@@ -328,6 +328,91 @@ CREATE INDEX IF NOT EXISTS idx_vehicle_documents_vehicle ON vehicle_documents(ve
 CREATE INDEX IF NOT EXISTS idx_vehicle_documents_expiry ON vehicle_documents(expiry_date);
 
 -- ═══════════════════════════════════════════════════════
+-- CORPORATE ACCOUNTS TABLE
+-- ═══════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS corporate_accounts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_name VARCHAR(200) NOT NULL,
+    company_email VARCHAR(200) NOT NULL,
+    company_phone VARCHAR(50),
+    company_address TEXT,
+    registration_number VARCHAR(100),
+    tax_id VARCHAR(100),
+    contact_person_name VARCHAR(200),
+    contact_person_email VARCHAR(200),
+    contact_person_phone VARCHAR(50),
+    credit_limit DECIMAL(14,2) NOT NULL DEFAULT 0,
+    current_balance DECIMAL(14,2) NOT NULL DEFAULT 0,
+    billing_cycle VARCHAR(20) NOT NULL DEFAULT 'monthly',
+    billing_day INTEGER NOT NULL DEFAULT 1,
+    payment_terms_days INTEGER NOT NULL DEFAULT 30,
+    discount_percentage DECIMAL(5,2) DEFAULT 0,
+    rate_agreement JSONB,
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    suspended_reason TEXT,
+    notes TEXT,
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ═══════════════════════════════════════════════════════
+-- CORPORATE EMPLOYEES TABLE
+-- ═══════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS corporate_employees (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    corporate_account_id UUID NOT NULL REFERENCES corporate_accounts(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id),
+    employee_id VARCHAR(50),
+    department VARCHAR(100),
+    is_admin BOOLEAN DEFAULT FALSE,
+    is_active BOOLEAN DEFAULT TRUE,
+    added_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_corp_employee UNIQUE (corporate_account_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_corporate_employees_account ON corporate_employees(corporate_account_id);
+CREATE INDEX IF NOT EXISTS idx_corporate_employees_user ON corporate_employees(user_id);
+
+-- ═══════════════════════════════════════════════════════
+-- INVOICES TABLE
+-- ═══════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS invoices (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    invoice_number VARCHAR(50) NOT NULL UNIQUE,
+    corporate_account_id UUID NOT NULL REFERENCES corporate_accounts(id),
+    billing_period_start DATE NOT NULL,
+    billing_period_end DATE NOT NULL,
+    subtotal DECIMAL(14,2) NOT NULL DEFAULT 0,
+    discount_amount DECIMAL(14,2) NOT NULL DEFAULT 0,
+    tax_amount DECIMAL(14,2) NOT NULL DEFAULT 0,
+    total_amount DECIMAL(14,2) NOT NULL DEFAULT 0,
+    status VARCHAR(20) NOT NULL DEFAULT 'draft',
+    due_date DATE NOT NULL,
+    paid_amount DECIMAL(14,2) DEFAULT 0,
+    paid_at TIMESTAMPTZ,
+    payment_reference VARCHAR(200),
+    notes TEXT,
+    line_items JSONB,
+    sent_at TIMESTAMPTZ,
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_invoices_corporate ON invoices(corporate_account_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
+
+-- ═══════════════════════════════════════════════════════
+-- BOOKINGS TABLE — corporate account link
+-- ═══════════════════════════════════════════════════════
+
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS corporate_account_id UUID REFERENCES corporate_accounts(id);
+
+-- ═══════════════════════════════════════════════════════
 -- Confirm success
 -- ═══════════════════════════════════════════════════════
 

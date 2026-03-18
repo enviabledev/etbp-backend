@@ -54,6 +54,8 @@ class Booking(TimestampMixin, Base):
     reminder_1h_sent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     review_prompted: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
+    corporate_account_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("corporate_accounts.id"))
+
     transferred_from_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     transferred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     rescheduled_from_trip_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
