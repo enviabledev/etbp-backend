@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.admin import agents, bookings, drivers, promos, reports, routes, schedules, settings, users, vehicles
+from app.api.admin import agents, bookings, drivers, notifications, promos, reports, routes, schedules, settings, users, vehicles
 
 router = APIRouter(prefix="/admin")
 
@@ -14,3 +14,4 @@ router.include_router(users.router)
 router.include_router(promos.router)
 router.include_router(reports.router)
 router.include_router(settings.router)
+router.include_router(notifications.router)

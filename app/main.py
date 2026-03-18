@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,6 +33,25 @@ async def _background_loop():
             # Run reminders every 3rd cycle (15 minutes)
             if cycle % 3 == 0:
                 await send_trip_reminders()
+            # Send scheduled campaigns every cycle
+            try:
+                from app.services.notification_composer_service import send_campaign
+                from sqlalchemy import select as _select
+                from app.models.notification_campaign import NotificationCampaign
+                from app.database import async_session_factory as _asf
+                async with _asf() as _db:
+                    sched_q = await _db.execute(
+                        _select(NotificationCampaign.id).where(
+                            NotificationCampaign.status == "draft",
+                            NotificationCampaign.scheduled_at.isnot(None),
+                            NotificationCampaign.scheduled_at <= datetime.now(timezone.utc),
+                        )
+                    )
+                    for cid in sched_q.scalars().all():
+                        await send_campaign(_db, cid)
+                    await _db.commit()
+            except Exception:
+                pass
             cycle += 1
         except Exception as e:
             logging.getLogger(__name__).error("Background loop error: %s", e)

@@ -114,6 +114,30 @@ ALTER TABLE bookings ADD COLUMN IF NOT EXISTS reminder_24h_sent BOOLEAN DEFAULT 
 ALTER TABLE bookings ADD COLUMN IF NOT EXISTS reminder_1h_sent BOOLEAN DEFAULT FALSE;
 
 -- ═══════════════════════════════════════════════════════
+-- NOTIFICATION CAMPAIGNS TABLE
+-- ═══════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS notification_campaigns (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    title VARCHAR(100) NOT NULL,
+    body TEXT NOT NULL,
+    channel VARCHAR(20) NOT NULL DEFAULT 'push',
+    target_type VARCHAR(50) NOT NULL,
+    target_value TEXT,
+    target_description TEXT,
+    status VARCHAR(20) NOT NULL DEFAULT 'draft',
+    total_recipients INTEGER DEFAULT 0,
+    sent_count INTEGER DEFAULT 0,
+    failed_count INTEGER DEFAULT 0,
+    scheduled_at TIMESTAMPTZ,
+    sent_at TIMESTAMPTZ,
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_notification_campaigns_status ON notification_campaigns(status);
+
+-- ═══════════════════════════════════════════════════════
 -- Confirm success
 -- ═══════════════════════════════════════════════════════
 
