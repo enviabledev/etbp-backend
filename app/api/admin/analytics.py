@@ -433,3 +433,61 @@ async def delete_widget(widget_id: uuid.UUID, db: DBSession, current_user: Curre
     await db.delete(w)
     await db.flush()
     return {"deleted": True}
+
+
+@router.get("/dashboard/widgets/{widget_id}/data")
+async def get_widget_data(widget_id: uuid.UUID, db: DBSession, current_user: CurrentUser, date_from: str | None = None, date_to: str | None = None):
+    from app.core.exceptions import NotFoundError as NF
+    result = await db.execute(select(DashboardWidget).where(DashboardWidget.id == widget_id, DashboardWidget.user_id == current_user.id))
+    widget = result.scalar_one_or_none()
+    if not widget:
+        raise NF("Widget not found")
+
+    d_from, d_to = _parse_dates(date_from, date_to)
+    source = widget.data_source
+
+    if source == "revenue":
+        total_q = await db.execute(select(func.sum(Booking.total_amount)).where(Booking.status.in_(["confirmed", "checked_in", "completed"]), func.date(Booking.created_at).between(d_from, d_to)))
+        total = float(total_q.scalar() or 0)
+        prev_days = (d_to - d_from).days + 1
+        prev_from = d_from - timedelta(days=prev_days)
+        prev_q = await db.execute(select(func.sum(Booking.total_amount)).where(Booking.status.in_(["confirmed", "checked_in", "completed"]), func.date(Booking.created_at).between(prev_from, d_from - timedelta(days=1))))
+        prev = float(prev_q.scalar() or 0)
+        change = round(((total - prev) / max(prev, 1)) * 100, 1) if prev else 0
+        return {"value": total, "label": widget.title, "comparison": f"{'+' if change >= 0 else ''}{change}%", "format": "currency"}
+
+    elif source == "bookings":
+        today = date.today()
+        count_q = await db.execute(select(func.count(Booking.id)).where(Booking.status.in_(["confirmed", "checked_in", "completed"]), func.date(Booking.created_at) == today))
+        return {"value": count_q.scalar() or 0, "label": widget.title, "format": "number"}
+
+    elif source == "occupancy":
+        occ_q = await db.execute(select(func.sum(Trip.total_seats - Trip.available_seats), func.sum(Trip.total_seats)).where(Trip.departure_date.between(d_from, d_to), Trip.status != "cancelled"))
+        row = occ_q.one()
+        rate = round(float(row[0] or 0) / max(float(row[1] or 1), 1) * 100, 1)
+        return {"value": rate, "label": widget.title, "format": "percentage"}
+
+    elif source == "satisfaction":
+        avg_q = await db.execute(select(func.avg(TripReview.overall_rating), func.count(TripReview.id)).where(TripReview.is_visible == True))  # noqa: E712
+        row = avg_q.one()
+        return {"value": round(float(row[0] or 0), 1), "label": widget.title, "total_reviews": row[1] or 0, "format": "rating"}
+
+    return {"value": 0, "label": widget.title}
+
+
+class LayoutUpdateRequest(BaseModel):
+    widgets: list[dict]
+
+
+@router.put("/dashboard/widgets/layout")
+async def update_layout(data: LayoutUpdateRequest, db: DBSession, current_user: CurrentUser):
+    for w in data.widgets:
+        wid = w.get("id")
+        pos = w.get("position")
+        if wid and pos:
+            result = await db.execute(select(DashboardWidget).where(DashboardWidget.id == uuid.UUID(wid), DashboardWidget.user_id == current_user.id))
+            widget = result.scalar_one_or_none()
+            if widget:
+                widget.position = pos
+    await db.flush()
+    return {"saved": True}
