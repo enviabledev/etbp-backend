@@ -75,6 +75,21 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at);
 
 -- ═══════════════════════════════════════════════════════
+-- DATA CLEANUP: release seats stuck on expired/cancelled bookings
+-- ═══════════════════════════════════════════════════════
+
+UPDATE trip_seats SET status = 'available', locked_by_user_id = NULL, locked_until = NULL
+WHERE id IN (
+    SELECT bp.seat_id FROM booking_passengers bp
+    JOIN bookings b ON bp.booking_id = b.id
+    WHERE b.status IN ('expired', 'cancelled') AND bp.seat_id IS NOT NULL
+) AND status != 'available';
+
+-- Also release any orphaned locked seats whose lock has expired
+UPDATE trip_seats SET status = 'available', locked_by_user_id = NULL, locked_until = NULL
+WHERE status = 'locked' AND locked_until < NOW();
+
+-- ═══════════════════════════════════════════════════════
 -- Confirm success
 -- ═══════════════════════════════════════════════════════
 

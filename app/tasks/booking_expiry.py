@@ -40,42 +40,54 @@ async def expire_pending_bookings() -> int:
             expired_bookings = result.scalars().all()
 
             for booking in expired_bookings:
-                booking.status = BookingStatus.EXPIRED.value
+                try:
+                    booking.status = BookingStatus.EXPIRED.value
 
-                # Find seat IDs for this booking's passengers
-                passenger_result = await db.execute(
-                    select(BookingPassenger.seat_id).where(
-                        BookingPassenger.booking_id == booking.id
-                    )
-                )
-                seat_ids = [row for row in passenger_result.scalars().all()]
-
-                if seat_ids:
-                    # Release seats back to available
-                    await db.execute(
-                        update(TripSeat)
-                        .where(TripSeat.id.in_(seat_ids))
-                        .values(
-                            status=SeatStatus.AVAILABLE.value,
-                            locked_by_user_id=None,
-                            locked_until=None,
+                    # Find seat IDs for this booking's passengers
+                    passenger_result = await db.execute(
+                        select(BookingPassenger.seat_id).where(
+                            BookingPassenger.booking_id == booking.id
                         )
                     )
+                    seat_ids = [sid for sid in passenger_result.scalars().all() if sid is not None]
 
-                    # Restore available_seats count on the trip
-                    await db.execute(
-                        update(Trip)
-                        .where(Trip.id == booking.trip_id)
-                        .values(available_seats=Trip.available_seats + len(seat_ids))
+                    if seat_ids:
+                        # Release seats back to available
+                        await db.execute(
+                            update(TripSeat)
+                            .where(TripSeat.id.in_(seat_ids))
+                            .values(
+                                status=SeatStatus.AVAILABLE.value,
+                                locked_by_user_id=None,
+                                locked_until=None,
+                            )
+                        )
+
+                        # Restore available_seats count on the trip
+                        await db.execute(
+                            update(Trip)
+                            .where(Trip.id == booking.trip_id)
+                            .values(available_seats=Trip.available_seats + len(seat_ids))
+                        )
+
+                        logger.info(
+                            "Releasing seats for expired booking %s: seat_ids=%s, trip_id=%s",
+                            booking.reference, seat_ids, booking.trip_id,
+                        )
+                    else:
+                        logger.warning(
+                            "Expired booking %s has no seat_ids to release", booking.reference,
+                        )
+
+                    logger.info(
+                        "Expired booking %s: deadline=%s, method=%s",
+                        booking.reference,
+                        "set" if booking.payment_deadline else "default 15min",
+                        booking.payment_method_hint or "unknown",
                     )
-
-                logger.info(
-                    "Expired booking %s: deadline=%s, method=%s",
-                    booking.reference,
-                    "set" if booking.payment_deadline else "default 15min",
-                    booking.payment_method_hint or "unknown",
-                )
-                expired_count += 1
+                    expired_count += 1
+                except Exception:
+                    logger.exception("Error expiring individual booking %s", booking.reference)
 
             await db.commit()
 
