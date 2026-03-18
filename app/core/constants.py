@@ -48,6 +48,7 @@ class TripStatus(str, enum.Enum):
     DEPARTED = "departed"
     EN_ROUTE = "en_route"
     ARRIVED = "arrived"
+    COMPLETED = "completed"
     CANCELLED = "cancelled"
     DELAYED = "delayed"
 

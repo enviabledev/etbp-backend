@@ -62,7 +62,7 @@ class Trip(TimestampMixin, Base):
     actual_arrival_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(
         Enum(
-            "scheduled", "boarding", "departed", "en_route", "arrived", "cancelled", "delayed",
+            "scheduled", "boarding", "departed", "en_route", "arrived", "completed", "cancelled", "delayed",
             name="trip_status",
         ),
         default="scheduled",
