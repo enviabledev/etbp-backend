@@ -521,6 +521,150 @@ async def create_agent_booking(data: AgentBookingRequest, db: DBSession, agent: 
     }
 
 
+# ── Smart Scan Lookup ──
+
+
+@router.get("/bookings/scan/{booking_ref}")
+async def scan_booking_lookup(booking_ref: str, db: DBSession, agent: AgentContext = AgentDep):
+    """Smart booking lookup for QR scan — returns booking + contextual actions."""
+    from app.models.route import Terminal
+
+    result = await db.execute(
+        select(Booking).options(
+            selectinload(Booking.passengers).selectinload(BookingPassenger.seat),
+            selectinload(Booking.payments),
+            selectinload(Booking.trip).selectinload(Trip.route).selectinload(Route.origin_terminal),
+            selectinload(Booking.trip).selectinload(Trip.route).selectinload(Route.destination_terminal),
+            selectinload(Booking.user),
+        ).where(Booking.reference == booking_ref.upper())
+    )
+    booking = result.scalar_one_or_none()
+    if not booking:
+        raise NotFoundError("Booking not found")
+
+    trip = booking.trip
+    route = trip.route if trip else None
+    payment = next((p for p in (booking.payments or []) if p.status in ("successful", "completed")), None)
+    is_paid = payment is not None
+    now = datetime.now(timezone.utc)
+
+    # Determine if trip is from agent's terminal
+    is_from_agent_terminal = route and route.origin_terminal_id == agent.terminal_id
+
+    # Build departure datetime for comparison
+    departure_dt = None
+    if trip:
+        departure_dt = datetime.combine(
+            trip.departure_date, trip.departure_time, tzinfo=timezone.utc
+        )
+
+    # Check-in window: 24h before departure
+    checkin_opens_at = departure_dt - timedelta(hours=24) if departure_dt else None
+    within_checkin_window = checkin_opens_at and now >= checkin_opens_at
+
+    # All passengers already checked in?
+    all_checked_in = all(p.checked_in for p in booking.passengers) if booking.passengers else False
+
+    # Determine payment status label
+    if is_paid:
+        payment_status = "paid"
+    elif booking.payment_method_hint == "pay_at_terminal":
+        payment_status = "pay_at_terminal"
+    else:
+        payment_status = "pending"
+
+    # Determine check-in eligibility and blocked reason
+    can_check_in = False
+    check_in_blocked_reason = None
+
+    if booking.status in ("expired",):
+        check_in_blocked_reason = "booking_expired"
+    elif booking.status in ("cancelled",):
+        check_in_blocked_reason = "booking_cancelled"
+    elif not is_from_agent_terminal:
+        check_in_blocked_reason = "wrong_terminal"
+    elif trip and trip.status in ("completed",):
+        check_in_blocked_reason = "trip_completed"
+    elif trip and trip.status in ("departed", "en_route"):
+        check_in_blocked_reason = "trip_departed"
+    elif all_checked_in:
+        check_in_blocked_reason = "already_checked_in"
+    elif not is_paid:
+        check_in_blocked_reason = "payment_required"
+    elif not within_checkin_window:
+        check_in_blocked_reason = "trip_not_today"
+    else:
+        can_check_in = True
+
+    # Can collect payment?
+    can_collect_payment = (
+        not is_paid
+        and booking.status not in ("expired", "cancelled", "completed", "checked_in")
+        and is_from_agent_terminal
+    )
+
+    # Get terminal name for wrong_terminal scenario
+    origin_terminal_name = None
+    origin_terminal_address = None
+    if check_in_blocked_reason == "wrong_terminal" and route and route.origin_terminal:
+        origin_terminal_name = route.origin_terminal.name
+        origin_terminal_address = route.origin_terminal.address
+
+    # Agent terminal name
+    agent_terminal_q = await db.execute(select(Terminal.name).where(Terminal.id == agent.terminal_id))
+    agent_terminal_name = agent_terminal_q.scalar()
+
+    return {
+        "booking": {
+            "id": str(booking.id),
+            "reference": booking.reference,
+            "status": booking.status,
+            "total_amount": float(booking.total_amount),
+            "currency": booking.currency,
+            "payment_status": payment_status,
+            "payment_method": payment.method if payment else (booking.payment_method_hint or None),
+            "payment_deadline": str(booking.payment_deadline) if booking.payment_deadline else None,
+            "created_at": str(booking.created_at),
+        },
+        "trip": {
+            "id": str(trip.id),
+            "route_name": route.name if route else None,
+            "origin_terminal": route.origin_terminal.name if route and route.origin_terminal else None,
+            "destination_terminal": route.destination_terminal.name if route and route.destination_terminal else None,
+            "departure_date": str(trip.departure_date),
+            "departure_time": str(trip.departure_time),
+            "status": trip.status,
+            "is_from_agent_terminal": is_from_agent_terminal,
+        } if trip else None,
+        "passengers": [
+            {
+                "id": str(p.id),
+                "name": f"{p.first_name} {p.last_name}",
+                "seat_number": p.seat.seat_number if p.seat else None,
+                "checked_in": p.checked_in,
+                "checked_in_at": str(booking.checked_in_at) if booking.checked_in_at and p.checked_in else None,
+            }
+            for p in booking.passengers
+        ],
+        "customer": {
+            "name": f"{booking.user.first_name} {booking.user.last_name}" if booking.user else None,
+            "phone": booking.user.phone if booking.user else booking.contact_phone,
+            "email": booking.user.email if booking.user else booking.contact_email,
+        },
+        "actions": {
+            "can_check_in": can_check_in,
+            "check_in_blocked_reason": check_in_blocked_reason,
+            "can_collect_payment": can_collect_payment,
+            "can_refund": False,
+            "amount_due": float(booking.total_amount) if not is_paid else 0,
+            "check_in_available_from": str(checkin_opens_at) if check_in_blocked_reason == "trip_not_today" and checkin_opens_at else None,
+            "wrong_terminal_name": origin_terminal_name,
+            "wrong_terminal_address": origin_terminal_address,
+            "agent_terminal_name": agent_terminal_name,
+        },
+    }
+
+
 # ── Booking Lookup ──
 
 
