@@ -271,3 +271,20 @@ async def remove_route_stop(route_id: uuid.UUID, stop_id: uuid.UUID, db: DBSessi
     await db.delete(stop)
     await db.flush()
     return {"message": "Route stop removed"}
+
+
+class ReorderStopsRequest(BaseModel):
+    stop_ids: list[uuid.UUID]
+
+
+@router.post("/{route_id}/stops/reorder", status_code=200, dependencies=[AdminUser])
+async def reorder_stops(route_id: uuid.UUID, data: ReorderStopsRequest, db: DBSession):
+    for i, stop_id in enumerate(data.stop_ids):
+        result = await db.execute(
+            select(RouteStop).where(RouteStop.id == stop_id, RouteStop.route_id == route_id)
+        )
+        stop = result.scalar_one_or_none()
+        if stop:
+            stop.stop_order = i + 1
+    await db.flush()
+    return {"reordered": True}

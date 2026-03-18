@@ -28,6 +28,7 @@ dependencies = [
     "firebase-admin>=6.4.0",
     "google-auth>=2.29.0",
     "PyJWT>=2.8.0",
+    "openpyxl>=3.1.0",
 ]
 
 [project.optional-dependencies]
