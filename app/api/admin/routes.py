@@ -132,7 +132,20 @@ async def get_terminal(terminal_id: uuid.UUID, db: DBSession):
     terminal = result.scalar_one_or_none()
     if not terminal:
         raise NotFoundError("Terminal not found")
-    return terminal
+
+    # Get agents assigned to this terminal
+    from app.models.user import User
+    agents_q = await db.execute(
+        select(User).where(User.assigned_terminal_id == terminal_id, User.role == "agent", User.is_active == True)  # noqa: E712
+    )
+    agents = [{"id": str(a.id), "first_name": a.first_name, "last_name": a.last_name, "email": a.email, "phone": a.phone} for a in agents_q.scalars().all()]
+
+    # Return terminal data + agents
+    return {
+        **{c.name: getattr(terminal, c.name) for c in terminal.__table__.columns},
+        "id": str(terminal.id),
+        "assigned_agents": agents,
+    }
 
 
 @router.put("/terminals/{terminal_id}", dependencies=[AdminUser])

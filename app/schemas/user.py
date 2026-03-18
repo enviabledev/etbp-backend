@@ -23,6 +23,7 @@ class UserResponse(BaseSchema):
     email_verified: bool
     phone_verified: bool
     has_logged_in: bool = False
+    assigned_terminal_id: uuid.UUID | None = None
     is_active: bool
     last_login_at: datetime | None
     created_at: datetime

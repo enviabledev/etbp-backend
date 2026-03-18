@@ -28,6 +28,7 @@ class CreateAgentRequest(BaseModel):
     email: EmailStr
     phone: str = Field(..., max_length=20)
     password: str | None = Field(None, min_length=8)
+    assigned_terminal_id: uuid.UUID | None = None
 
 
 class UpdateAgentRequest(BaseModel):
@@ -36,6 +37,7 @@ class UpdateAgentRequest(BaseModel):
     email: EmailStr | None = None
     phone: str | None = Field(None, max_length=20)
     is_active: bool | None = None
+    assigned_terminal_id: uuid.UUID | None = None
 
 
 @router.post("", status_code=201, dependencies=[AdminUser])
@@ -52,6 +54,7 @@ async def create_agent(data: CreateAgentRequest, db: DBSession):
         email=data.email.lower(), phone=data.phone,
         first_name=data.first_name, last_name=data.last_name,
         password_hash=hash_password(password), role=UserRole.AGENT, is_active=True,
+        assigned_terminal_id=data.assigned_terminal_id,
     )
     db.add(user)
     await db.flush()
@@ -90,12 +93,22 @@ async def list_agents(
     result = await db.execute(query)
     items = []
     for user, booking_count, last_booking in result.all():
+        # Load terminal for each agent
+        terminal_name = None
+        if user.assigned_terminal_id:
+            from app.models.route import Terminal
+            term_q = await db.execute(select(Terminal).where(Terminal.id == user.assigned_terminal_id))
+            term = term_q.scalar_one_or_none()
+            if term:
+                terminal_name = f"{term.name} ({term.city})"
         items.append({
             "id": str(user.id), "email": user.email, "phone": user.phone,
             "first_name": user.first_name, "last_name": user.last_name,
             "is_active": user.is_active, "created_at": str(user.created_at),
             "booking_count": booking_count,
             "last_booking": str(last_booking) if last_booking else None,
+            "assigned_terminal_id": str(user.assigned_terminal_id) if user.assigned_terminal_id else None,
+            "terminal_name": terminal_name,
         })
     return {"items": items, "total": total, "page": page, "page_size": page_size}
 
@@ -161,6 +174,15 @@ async def get_agent_detail(user_id: uuid.UUID, db: DBSession):
         for row in recent_q.all()
     ]
 
+    # Get terminal info
+    terminal_info = None
+    if user.assigned_terminal_id:
+        from app.models.route import Terminal
+        term_q = await db.execute(select(Terminal).where(Terminal.id == user.assigned_terminal_id))
+        term = term_q.scalar_one_or_none()
+        if term:
+            terminal_info = {"id": str(term.id), "name": term.name, "city": term.city}
+
     return {
         "user": UserResponse.model_validate(user),
         "stats": {
@@ -169,6 +191,7 @@ async def get_agent_detail(user_id: uuid.UUID, db: DBSession):
             "bookings_this_month": bookings_this_month,
         },
         "recent_bookings": recent_bookings,
+        "assigned_terminal": terminal_info,
     }
 
 
