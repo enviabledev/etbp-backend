@@ -7,6 +7,7 @@ from app.models.booking import Booking, BookingPassenger
 from app.models.payment import Payment, Wallet, WalletTransaction, PromoCode
 from app.models.review import TripReview
 from app.models.notification import Notification, SupportTicket, AuditLog, PricingRule
+from app.models.corporate import CorporateAccount, CorporateEmployee, Invoice
 
 __all__ = [
     "User", "RefreshToken", "OTPCode",
@@ -18,4 +19,5 @@ __all__ = [
     "Payment", "Wallet", "WalletTransaction", "PromoCode",
     "TripReview",
     "Notification", "SupportTicket", "AuditLog", "PricingRule",
+    "CorporateAccount", "CorporateEmployee", "Invoice",
 ]

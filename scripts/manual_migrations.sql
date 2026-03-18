@@ -492,6 +492,26 @@ CREATE INDEX IF NOT EXISTS idx_lost_found_terminal ON lost_found_reports(termina
 CREATE INDEX IF NOT EXISTS idx_lost_found_status ON lost_found_reports(status);
 
 -- ═══════════════════════════════════════════════════════
+-- DASHBOARD WIDGETS TABLE
+-- ═══════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS dashboard_widgets (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    widget_type VARCHAR(50) NOT NULL,
+    data_source VARCHAR(50) NOT NULL,
+    title VARCHAR(200) NOT NULL,
+    config JSONB DEFAULT '{}',
+    position JSONB DEFAULT '{"x":0,"y":0,"w":6,"h":4}',
+    is_visible BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_dashboard_widgets_user ON dashboard_widgets(user_id);
+
+ALTER TABLE routes ADD COLUMN IF NOT EXISTS estimated_operating_cost DECIMAL(12,2);
+
+-- ═══════════════════════════════════════════════════════
 -- Confirm success
 -- ═══════════════════════════════════════════════════════
 
