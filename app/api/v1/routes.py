@@ -93,6 +93,55 @@ async def list_routes(
     return result.scalars().all()
 
 
+@router.get("/{route_id}/map")
+async def get_route_map(route_id: uuid.UUID, db: DBSession):
+    """Get route geographic data for map rendering."""
+    from app.models.route import RouteStop
+
+    result = await db.execute(
+        select(Route).options(
+            selectinload(Route.origin_terminal),
+            selectinload(Route.destination_terminal),
+            selectinload(Route.stops).selectinload(RouteStop.terminal),
+        ).where(Route.id == route_id)
+    )
+    route = result.scalar_one_or_none()
+    if not route:
+        raise NotFoundError("Route not found")
+
+    stops = []
+    for stop in sorted(route.stops, key=lambda s: s.stop_order):
+        t = stop.terminal
+        if t:
+            stops.append({
+                "name": t.name, "city": t.city,
+                "latitude": float(t.latitude) if t.latitude else None,
+                "longitude": float(t.longitude) if t.longitude else None,
+                "estimated_arrival_minutes": stop.duration_from_origin_minutes,
+                "order": stop.stop_order,
+            })
+
+    o = route.origin_terminal
+    d = route.destination_terminal
+    return {
+        "route_id": str(route.id),
+        "route_name": route.name,
+        "distance_km": route.distance_km,
+        "estimated_duration_minutes": route.estimated_duration_minutes,
+        "origin": {
+            "name": o.name, "city": o.city, "address": o.address,
+            "latitude": float(o.latitude) if o.latitude else None,
+            "longitude": float(o.longitude) if o.longitude else None,
+        } if o else None,
+        "destination": {
+            "name": d.name, "city": d.city, "address": d.address,
+            "latitude": float(d.latitude) if d.latitude else None,
+            "longitude": float(d.longitude) if d.longitude else None,
+        } if d else None,
+        "stops": stops,
+    }
+
+
 @router.get("/{route_id}", response_model=RouteDetailResponse)
 async def get_route(route_id: uuid.UUID, db: DBSession):
     result = await db.execute(

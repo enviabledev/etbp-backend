@@ -245,6 +245,16 @@ CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id) WHERE google_
 CREATE INDEX IF NOT EXISTS idx_users_apple_id ON users(apple_id) WHERE apple_id IS NOT NULL;
 
 -- ═══════════════════════════════════════════════════════
+-- TERMINAL COORDINATES (seed existing terminals)
+-- ═══════════════════════════════════════════════════════
+
+UPDATE terminals SET latitude = 6.6018, longitude = 3.3515 WHERE name ILIKE '%Berger%' AND latitude IS NULL;
+UPDATE terminals SET latitude = 6.5244, longitude = 3.3792 WHERE name ILIKE '%Jibowu%' AND latitude IS NULL;
+UPDATE terminals SET latitude = 9.0579, longitude = 7.4951 WHERE (name ILIKE '%Abuja%' OR name ILIKE '%Utako%') AND latitude IS NULL;
+UPDATE terminals SET latitude = 6.3350, longitude = 5.6037 WHERE name ILIKE '%Benin%' AND latitude IS NULL;
+UPDATE terminals SET latitude = 4.8156, longitude = 7.0498 WHERE name ILIKE '%Port Harcourt%' AND latitude IS NULL;
+
+-- ═══════════════════════════════════════════════════════
 -- Confirm success
 -- ═══════════════════════════════════════════════════════
 
