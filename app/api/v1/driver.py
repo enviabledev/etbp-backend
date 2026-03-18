@@ -314,6 +314,20 @@ async def checkin_passenger(
     if booking.status == "checked_in":
         raise BadRequestError("Booking already checked in")
 
+    # Verify payment
+    from app.models.payment import Payment as PaymentModel
+    pay_q = await db.execute(
+        select(PaymentModel).where(PaymentModel.booking_id == booking.id, PaymentModel.status.in_(["successful", "completed"]))
+    )
+    if not pay_q.scalar_one_or_none():
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=402, content={
+            "error": "payment_required",
+            "amount_due": float(booking.total_amount),
+            "booking_ref": booking.reference,
+            "message": "Payment required. Direct passenger to the terminal agent.",
+        })
+
     booking.status = BookingStatus.CHECKED_IN.value
     booking.checked_in_at = datetime.now(timezone.utc)
     for p in booking.passengers:

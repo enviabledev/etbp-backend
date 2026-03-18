@@ -145,3 +145,37 @@ async def apply_promo(
     return await booking_service.apply_promo_code(
         db, current_user.id, reference, data.promo_code
     )
+
+
+@router.get("/unpaid")
+async def list_unpaid_bookings(db: DBSession, current_user: CurrentUser):
+    """List bookings that haven't been paid yet (pay-at-terminal)."""
+    from sqlalchemy import func
+    from app.models.payment import Payment
+    from app.models.schedule import Trip
+    from app.models.route import Route
+
+    # Bookings with no successful payment
+    subq = select(Payment.booking_id).where(Payment.status.in_(["successful", "completed"])).subquery()
+    result = await db.execute(
+        select(Booking)
+        .options(selectinload(Booking.trip).selectinload(Trip.route))
+        .where(
+            Booking.user_id == current_user.id,
+            Booking.status == BookingStatus.PENDING.value,
+            ~Booking.id.in_(select(subq)),
+        )
+        .order_by(Booking.created_at.desc())
+        .limit(10)
+    )
+    bookings = result.scalars().all()
+    return {
+        "items": [{
+            "id": str(b.id),
+            "booking_ref": b.reference,
+            "route_name": b.trip.route.name if b.trip and b.trip.route else None,
+            "departure_date": str(b.trip.departure_date) if b.trip else None,
+            "departure_time": str(b.trip.departure_time) if b.trip else None,
+            "amount_due": float(b.total_amount),
+        } for b in bookings],
+    }

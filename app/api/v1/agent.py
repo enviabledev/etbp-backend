@@ -271,10 +271,25 @@ async def get_agent_manifest(trip_id: uuid.UUID, db: DBSession, agent: AgentCont
                 "checked_in": p.checked_in,
                 "checked_in_at": str(booking.checked_in_at) if booking.checked_in_at and p.checked_in else None,
                 "payment_method": payment.method if payment else None,
-                "payment_status": payment.status if payment else "pending",
+                "payment_status": "paid" if payment and payment.status in ("successful", "completed") else "unpaid",
+                "amount_due": float(booking.total_amount) if not (payment and payment.status in ("successful", "completed")) else 0,
             })
     manifest.sort(key=lambda m: m["seat_number"] or "")
     return {"trip_id": str(trip_id), "passengers": manifest, "total": len(manifest)}
+
+
+# ── Payment Helpers ──
+
+
+async def _booking_is_paid(db: DBSession, booking_id: uuid.UUID) -> bool:
+    """Check if a booking has a successful payment."""
+    result = await db.execute(
+        select(Payment).where(
+            Payment.booking_id == booking_id,
+            Payment.status.in_(["successful", "completed"]),
+        )
+    )
+    return result.scalar_one_or_none() is not None
 
 
 # ── Check-in ──
@@ -292,6 +307,18 @@ async def agent_checkin(trip_id: uuid.UUID, booking_id: uuid.UUID, db: DBSession
     if booking.status == "checked_in":
         raise BadRequestError("Already checked in")
 
+    # Verify payment
+    if not await _booking_is_paid(db, booking.id):
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=402, content={
+            "error": "payment_required",
+            "amount_due": float(booking.total_amount),
+            "currency": booking.currency,
+            "booking_ref": booking.reference,
+            "booking_id": str(booking.id),
+            "message": "Payment required before check-in",
+        })
+
     booking.status = BookingStatus.CHECKED_IN.value
     booking.checked_in_at = datetime.now(timezone.utc)
     for p in booking.passengers:
@@ -304,6 +331,45 @@ async def agent_checkin(trip_id: uuid.UUID, booking_id: uuid.UUID, db: DBSession
         "passenger_name": f"{primary.first_name} {primary.last_name}" if primary else "Unknown",
         "seat_number": primary.seat.seat_number if primary and primary.seat else None,
         "checked_in_at": str(booking.checked_in_at),
+    }
+
+
+# ── Booking Payment ──
+
+
+class BookingPayRequest(BaseModel):
+    payment_method: str  # cash, pos, transfer
+    payment_reference: str | None = None
+
+
+@router.post("/bookings/{booking_ref}/pay")
+async def pay_booking(booking_ref: str, data: BookingPayRequest, db: DBSession, agent: AgentContext = AgentDep):
+    """Record payment for a pay-at-terminal booking."""
+    result = await db.execute(select(Booking).where(Booking.reference == booking_ref.upper()))
+    booking = result.scalar_one_or_none()
+    if not booking:
+        raise NotFoundError("Booking not found")
+    if await _booking_is_paid(db, booking.id):
+        raise BadRequestError("Booking is already paid")
+
+    payment = Payment(
+        booking_id=booking.id, user_id=booking.user_id,
+        amount=float(booking.total_amount), method=data.payment_method,
+        status=PaymentStatus.SUCCESSFUL.value, gateway="terminal",
+        paid_at=datetime.now(timezone.utc), gateway_reference=data.payment_reference,
+    )
+    db.add(payment)
+    booking.status = BookingStatus.CONFIRMED.value
+    await db.flush()
+
+    await log_action(db, agent.user_id, "agent_collect_payment", "booking", str(booking.id), {
+        "reference": booking_ref, "amount": float(booking.total_amount), "method": data.payment_method,
+    })
+
+    return {
+        "booking_ref": booking.reference, "status": booking.status,
+        "amount_paid": float(booking.total_amount), "payment_method": data.payment_method,
+        "message": "Payment recorded. Passenger can now be checked in.",
     }
 
 
