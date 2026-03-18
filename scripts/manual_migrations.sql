@@ -512,6 +512,67 @@ CREATE INDEX IF NOT EXISTS idx_dashboard_widgets_user ON dashboard_widgets(user_
 ALTER TABLE routes ADD COLUMN IF NOT EXISTS estimated_operating_cost DECIMAL(12,2);
 
 -- ═══════════════════════════════════════════════════════
+-- ROUTE STOPS TABLE
+-- ═══════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS route_stops (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    route_id UUID NOT NULL REFERENCES routes(id) ON DELETE CASCADE,
+    terminal_id UUID NOT NULL REFERENCES terminals(id),
+    stop_order INTEGER NOT NULL,
+    duration_from_origin_minutes INTEGER,
+    price_from_origin DECIMAL(12,2),
+    is_pickup_point BOOLEAN DEFAULT TRUE,
+    is_dropoff_point BOOLEAN DEFAULT TRUE,
+    CONSTRAINT uq_route_stop_order UNIQUE (route_id, stop_order)
+);
+CREATE INDEX IF NOT EXISTS idx_route_stops_route ON route_stops(route_id);
+
+-- ═══════════════════════════════════════════════════════
+-- CONVERSATIONS TABLE
+-- ═══════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS conversations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    conversation_type VARCHAR(30) NOT NULL,
+    subject VARCHAR(300),
+    trip_id UUID REFERENCES trips(id),
+    booking_id UUID REFERENCES bookings(id),
+    status VARCHAR(20) NOT NULL DEFAULT 'open',
+    priority VARCHAR(20) NOT NULL DEFAULT 'normal',
+    assigned_to UUID REFERENCES users(id),
+    participant_ids JSONB NOT NULL DEFAULT '[]',
+    last_message_at TIMESTAMPTZ,
+    last_message_preview VARCHAR(200),
+    resolved_at TIMESTAMPTZ,
+    resolved_by UUID REFERENCES users(id),
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_conversations_type ON conversations(conversation_type);
+CREATE INDEX IF NOT EXISTS idx_conversations_status ON conversations(status);
+CREATE INDEX IF NOT EXISTS idx_conversations_assigned ON conversations(assigned_to);
+
+-- ═══════════════════════════════════════════════════════
+-- MESSAGES TABLE
+-- ═══════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    sender_id UUID NOT NULL REFERENCES users(id),
+    content TEXT NOT NULL,
+    message_type VARCHAR(20) NOT NULL DEFAULT 'text',
+    metadata JSONB,
+    is_read BOOLEAN DEFAULT FALSE,
+    read_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
+
+-- ═══════════════════════════════════════════════════════
 -- Confirm success
 -- ═══════════════════════════════════════════════════════
 

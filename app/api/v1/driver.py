@@ -582,3 +582,61 @@ async def get_vehicle_status(trip_id: uuid.UUID, db: DBSession, driver: Driver =
             "next_service_due": str(last.next_service_due_date) if last and last.next_service_due_date else None,
         },
     }
+
+
+# ── Navigation ──
+
+
+@router.get("/trips/{trip_id}/navigation")
+async def get_navigation(trip_id: uuid.UUID, db: DBSession, driver: Driver = DriverDep):
+    from app.models.route import RouteStop, Terminal
+    result = await db.execute(
+        select(Trip).options(
+            selectinload(Trip.route).selectinload(Route.origin_terminal),
+            selectinload(Trip.route).selectinload(Route.destination_terminal),
+        ).where(Trip.id == trip_id)
+    )
+    trip = result.scalar_one_or_none()
+    if not trip:
+        raise NotFoundError("Trip not found")
+    if trip.driver_id != driver.id:
+        raise ForbiddenError("Not your trip")
+
+    route = trip.route
+    if not route:
+        return {"stops": []}
+
+    o = route.origin_terminal
+    d = route.destination_terminal
+
+    stops = [{"order": 0, "name": o.name if o else "Origin", "type": "origin",
+              "latitude": float(o.latitude) if o and o.latitude else None,
+              "longitude": float(o.longitude) if o and o.longitude else None,
+              "status": "completed" if trip.actual_departure_at else "current"}]
+
+    # Intermediate stops
+    stop_q = await db.execute(
+        select(RouteStop).where(RouteStop.route_id == route.id).order_by(RouteStop.stop_order)
+    )
+    for s in stop_q.scalars().all():
+        t = None
+        if s.terminal_id:
+            t_q = await db.execute(select(Terminal).where(Terminal.id == s.terminal_id))
+            t = t_q.scalar_one_or_none()
+        stops.append({
+            "order": s.stop_order,
+            "name": t.name if t else (s.terminal_id and "Stop") or f"Stop {s.stop_order}",
+            "type": "rest_stop" if s.is_pickup_point or s.is_dropoff_point else "rest_stop",
+            "latitude": float(t.latitude) if t and t.latitude else None,
+            "longitude": float(t.longitude) if t and t.longitude else None,
+            "estimated_minutes": s.duration_from_origin_minutes,
+            "stop_duration_minutes": getattr(s, 'stop_duration_minutes', 0) if hasattr(s, 'stop_duration_minutes') else 0,
+            "status": "upcoming",
+        })
+
+    stops.append({"order": 99, "name": d.name if d else "Destination", "type": "destination",
+                  "latitude": float(d.latitude) if d and d.latitude else None,
+                  "longitude": float(d.longitude) if d and d.longitude else None,
+                  "status": "upcoming"})
+
+    return {"stops": stops}
