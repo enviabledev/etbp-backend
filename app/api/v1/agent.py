@@ -360,6 +360,7 @@ async def pay_booking(booking_ref: str, data: BookingPayRequest, db: DBSession, 
     )
     db.add(payment)
     booking.status = BookingStatus.CONFIRMED.value
+    booking.payment_deadline = None
     await db.flush()
 
     await log_action(db, agent.user_id, "agent_collect_payment", "booking", str(booking.id), {
@@ -926,8 +927,34 @@ async def process_wallet_qr_payment(data: WalletPaymentRequest, db: DBSession, a
     result = await process_wallet_payment(
         db, agent.user_id, data.token, data.amount, data.description, data.booking_id
     )
+
+    # If a booking was specified, create Payment record and confirm the booking
+    if data.booking_id:
+        booking_q = await db.execute(select(Booking).where(Booking.id == data.booking_id))
+        booking = booking_q.scalar_one_or_none()
+        if booking and booking.status in (BookingStatus.PENDING.value, "pending"):
+            # Create Payment record
+            payment = Payment(
+                booking_id=booking.id,
+                user_id=booking.user_id,
+                amount=data.amount,
+                method="wallet",
+                status=PaymentStatus.SUCCESSFUL.value,
+                gateway="wallet_qr",
+                paid_at=datetime.now(timezone.utc),
+                gateway_reference=result.get("transaction_id"),
+            )
+            db.add(payment)
+
+            # Confirm booking and clear deadline
+            booking.status = BookingStatus.CONFIRMED.value
+            booking.payment_method_hint = "wallet"
+            booking.payment_deadline = None
+            await db.flush()
+
     await log_action(db, agent.user_id, "agent_wallet_payment", "wallet", result.get("transaction_id"), {
         "amount": data.amount, "customer": result.get("customer_name"),
+        "booking_id": str(data.booking_id) if data.booking_id else None,
     })
     return result
 
