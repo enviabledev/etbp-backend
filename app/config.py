@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     superadmin_email: str = "admin@etbp.com"
     superadmin_password: str = "change-me"
 
+    # Firebase
+    firebase_service_account: str = ""
+    firebase_service_account_path: str = ""
+
     @property
     def sync_database_url(self) -> str:
         return self.database_url.replace("+asyncpg", "+psycopg2")

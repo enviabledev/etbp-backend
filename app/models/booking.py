@@ -50,6 +50,8 @@ class Booking(TimestampMixin, Base):
     cancellation_reason: Mapped[str | None] = mapped_column(Text)
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     checked_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reminder_24h_sent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    reminder_1h_sent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
     user: Mapped["User"] = relationship(  # noqa: F821
         back_populates="bookings", foreign_keys=[user_id]

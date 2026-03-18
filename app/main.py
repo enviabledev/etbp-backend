@@ -19,26 +19,32 @@ logging.basicConfig(
 )
 
 
-async def _booking_expiry_loop():
-    """Background loop that expires stale pending bookings and releases expired seat locks."""
+async def _background_loop():
+    """Background loop: booking expiry (5min), reminders (15min)."""
     from app.tasks.booking_expiry import expire_pending_bookings, release_expired_seat_locks
+    from app.tasks.reminder_task import send_trip_reminders
 
+    cycle = 0
     while True:
         try:
             await expire_pending_bookings()
             await release_expired_seat_locks()
+            # Run reminders every 3rd cycle (15 minutes)
+            if cycle % 3 == 0:
+                await send_trip_reminders()
+            cycle += 1
         except Exception as e:
-            logging.getLogger(__name__).error("Booking expiry loop error: %s", e)
-        await asyncio.sleep(300)  # Run every 5 minutes
+            logging.getLogger(__name__).error("Background loop error: %s", e)
+        await asyncio.sleep(300)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: launch background task
-    task = asyncio.create_task(_booking_expiry_loop())
-    logging.getLogger(__name__).info("Started booking expiry background task")
+    from app.integrations.firebase import init_firebase
+    init_firebase()
+    task = asyncio.create_task(_background_loop())
+    logging.getLogger(__name__).info("Started background tasks (expiry + reminders)")
     yield
-    # Shutdown: cancel background task
     task.cancel()
     try:
         await task

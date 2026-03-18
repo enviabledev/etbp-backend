@@ -90,6 +90,30 @@ UPDATE trip_seats SET status = 'available', locked_by_user_id = NULL, locked_unt
 WHERE status = 'locked' AND locked_until < NOW();
 
 -- ═══════════════════════════════════════════════════════
+-- DEVICE TOKENS TABLE
+-- ═══════════════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS device_tokens (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token VARCHAR(500) NOT NULL,
+    device_type VARCHAR(20) NOT NULL DEFAULT 'android',
+    app_type VARCHAR(20) NOT NULL DEFAULT 'customer',
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_user_device_token UNIQUE (user_id, token)
+);
+CREATE INDEX IF NOT EXISTS idx_device_tokens_user ON device_tokens(user_id);
+
+-- ═══════════════════════════════════════════════════════
+-- BOOKINGS TABLE — reminder tracking fields
+-- ═══════════════════════════════════════════════════════
+
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS reminder_24h_sent BOOLEAN DEFAULT FALSE;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS reminder_1h_sent BOOLEAN DEFAULT FALSE;
+
+-- ═══════════════════════════════════════════════════════
 -- Confirm success
 -- ═══════════════════════════════════════════════════════
 
