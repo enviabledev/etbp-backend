@@ -16,18 +16,25 @@ PENDING_EXPIRY_MINUTES = 15
 
 
 async def expire_pending_bookings() -> int:
-    """Expire bookings that have been pending for more than 15 minutes.
-    Releases their seats back to available and restores available_seats count."""
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=PENDING_EXPIRY_MINUTES)
+    """Expire bookings that have passed their payment deadline.
+    Uses payment_deadline if set, falls back to 15-minute default."""
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(minutes=PENDING_EXPIRY_MINUTES)
     expired_count = 0
 
     async with async_session_factory() as db:
         try:
+            from sqlalchemy import or_, and_
             # Find expired pending bookings
             result = await db.execute(
                 select(Booking).where(
                     Booking.status == BookingStatus.PENDING.value,
-                    Booking.created_at < cutoff,
+                    or_(
+                        # Bookings with explicit deadline that has passed
+                        and_(Booking.payment_deadline.isnot(None), Booking.payment_deadline < now),
+                        # Legacy bookings without deadline (15 min default)
+                        and_(Booking.payment_deadline.is_(None), Booking.created_at < cutoff),
+                    ),
                 )
             )
             expired_bookings = result.scalars().all()

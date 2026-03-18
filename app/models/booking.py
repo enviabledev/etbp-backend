@@ -45,6 +45,8 @@ class Booking(TimestampMixin, Base):
     emergency_contact_name: Mapped[str | None] = mapped_column(String(200))
     emergency_contact_phone: Mapped[str | None] = mapped_column(String(20))
     special_requests: Mapped[str | None] = mapped_column(Text)
+    payment_method_hint: Mapped[str | None] = mapped_column(String(20))  # card, wallet, pay_at_terminal
+    payment_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cancellation_reason: Mapped[str | None] = mapped_column(Text)
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     checked_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

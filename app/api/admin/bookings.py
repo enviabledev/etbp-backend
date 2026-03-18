@@ -1,5 +1,5 @@
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, EmailStr, Field
@@ -119,19 +119,100 @@ async def get_booking(booking_id: uuid.UUID, db: DBSession):
     return booking
 
 
+VALID_TRANSITIONS = {
+    "pending": ["confirmed", "cancelled"],
+    "confirmed": ["checked_in", "cancelled", "no_show", "completed"],
+    "checked_in": ["completed"],
+    "expired": ["pending", "confirmed", "cancelled"],
+    "cancelled": ["pending", "confirmed"],
+    "completed": [],
+    "no_show": [],
+}
+
+
+def _calc_payment_deadline(created_at: datetime, departure_dt: datetime, method: str | None) -> datetime:
+    """Calculate payment deadline based on method and trip departure."""
+    if method == "pay_at_terminal":
+        # 48h or 1h before departure, whichever is sooner
+        deadline_48h = created_at + timedelta(hours=48)
+        deadline_before_dep = departure_dt - timedelta(hours=1)
+        # But if trip departs in < 2h, give at least 30 min
+        if departure_dt - created_at < timedelta(hours=2):
+            deadline_before_dep = departure_dt - timedelta(minutes=30)
+        # If trip departs in < 30 min, give 15 min
+        if departure_dt - created_at < timedelta(minutes=30):
+            return created_at + timedelta(minutes=15)
+        return min(deadline_48h, deadline_before_dep)
+    # Online payments: 15 min
+    return created_at + timedelta(minutes=15)
+
+
 @router.put("/{booking_id}/status", dependencies=[AdminUser])
 async def update_booking_status(
     booking_id: uuid.UUID, status: BookingStatus, db: DBSession, current_user: CurrentUser
 ):
-    result = await db.execute(select(Booking).where(Booking.id == booking_id))
+    from app.models.schedule import TripSeat
+
+    result = await db.execute(
+        select(Booking).options(selectinload(Booking.passengers))
+        .where(Booking.id == booking_id)
+    )
     booking = result.scalar_one_or_none()
     if not booking:
         raise NotFoundError("Booking not found")
 
     old_status = booking.status
-    booking.status = status.value
+    new_status = status.value
+
+    # Validate transition
+    allowed = VALID_TRANSITIONS.get(old_status, [])
+    if new_status not in allowed:
+        raise BadRequestError(f"Invalid status transition: {old_status} → {new_status}. Allowed: {allowed}")
+
+    # Reactivation logic (expired/cancelled → pending/confirmed)
+    is_reactivation = old_status in ("expired", "cancelled") and new_status in ("pending", "confirmed")
+
+    if is_reactivation:
+        # Validate trip
+        trip_q = await db.execute(select(Trip).where(Trip.id == booking.trip_id))
+        trip = trip_q.scalar_one_or_none()
+        if not trip:
+            raise BadRequestError("Cannot reactivate: trip no longer exists")
+        if trip.status in ("departed", "completed", "cancelled"):
+            raise BadRequestError(f"Cannot reactivate: trip has already {trip.status}")
+
+        dep_dt = datetime.combine(trip.departure_date, trip.departure_time, tzinfo=timezone.utc)
+        if dep_dt < datetime.now(timezone.utc):
+            raise BadRequestError(f"Cannot reactivate: trip departed on {trip.departure_date} at {trip.departure_time}")
+
+        # Validate seats
+        seat_ids = [p.seat_id for p in booking.passengers]
+        if seat_ids:
+            seat_q = await db.execute(select(TripSeat).where(TripSeat.id.in_(seat_ids)))
+            seats = {s.id: s for s in seat_q.scalars().all()}
+            taken = [seats[sid].seat_number for sid in seat_ids if sid in seats and seats[sid].status != SeatStatus.AVAILABLE.value]
+            if taken:
+                # Get available seats for the error
+                avail_q = await db.execute(select(TripSeat.seat_number).where(TripSeat.trip_id == booking.trip_id, TripSeat.status == SeatStatus.AVAILABLE.value))
+                available = [r for r in avail_q.scalars().all()]
+                raise BadRequestError(f"Cannot reactivate: seat(s) {', '.join(taken)} are no longer available. Available seats: {', '.join(available)}")
+
+            # Re-lock seats
+            for sid in seat_ids:
+                if sid in seats:
+                    seats[sid].status = SeatStatus.BOOKED.value
+            trip.available_seats -= len(seat_ids)
+
+        # Set payment deadline for pending
+        if new_status == "pending":
+            booking.payment_deadline = _calc_payment_deadline(datetime.now(timezone.utc), dep_dt, booking.payment_method_hint)
+
+    booking.status = new_status
     await db.flush()
-    await log_action(db, current_user.id, "update_booking_status", "booking", str(booking_id), {"new_status": status.value})
+    await log_action(db, current_user.id, "update_booking_status", "booking", str(booking_id), {
+        "old_status": old_status, "new_status": new_status, "reactivation": is_reactivation,
+    })
+
     return {
         "id": str(booking.id),
         "reference": booking.reference,

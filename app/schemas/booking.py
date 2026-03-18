@@ -107,6 +107,8 @@ class BookingResponse(BaseSchema):
     contact_phone: str | None
     special_requests: str | None
     created_at: datetime
+    payment_method_hint: str | None = None
+    payment_deadline: datetime | None = None
 
     @model_validator(mode="before")
     @classmethod
