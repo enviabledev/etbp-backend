@@ -12,3 +12,6 @@ venv/
 .ruff_cache/
 *.egg
 celerybeat-schedule
+
+# Firebase
+firebase-service-account.json

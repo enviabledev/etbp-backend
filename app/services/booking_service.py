@@ -290,6 +290,18 @@ async def cancel_booking(
         refund_percentage=refund_pct,
     )
 
+    # Push notification
+    try:
+        from app.services.push_notification_service import send_push_to_user
+        await send_push_to_user(
+            db, booking.user_id, "Booking Cancelled",
+            f"Your booking {booking.reference} has been cancelled.",
+            {"type": "booking_cancelled", "booking_ref": booking.reference},
+            app_type="customer",
+        )
+    except Exception:
+        pass
+
     return {
         "id": booking.id,
         "reference": booking.reference,

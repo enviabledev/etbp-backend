@@ -13,7 +13,7 @@ def init_firebase():
         return
 
     service_account = os.getenv("FIREBASE_SERVICE_ACCOUNT")
-    service_account_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH")
+    service_account_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH", "./firebase-service-account.json")
 
     if service_account:
         try:

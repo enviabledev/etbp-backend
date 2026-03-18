@@ -277,6 +277,21 @@ async def handle_paystack_webhook(
             payment_date=payment.paid_at.strftime("%d %b %Y %H:%M") if payment.paid_at else "N/A",
         )
 
+        # Push notification
+        try:
+            from app.services.push_notification_service import send_push_to_user
+            route_name = route.name if route else "your trip"
+            dep_date = trip.departure_date.strftime("%d %b") if trip else ""
+            dep_time = trip.departure_time.strftime("%H:%M") if trip else ""
+            await send_push_to_user(
+                db, booking.user_id, "Booking Confirmed",
+                f"Your trip {route_name} on {dep_date} at {dep_time} is confirmed. Ref: {booking.reference}",
+                {"type": "booking_confirmed", "booking_ref": booking.reference},
+                app_type="customer",
+            )
+        except Exception:
+            pass
+
     await db.flush()
 
 

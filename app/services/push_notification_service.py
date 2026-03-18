@@ -69,3 +69,34 @@ async def send_push_to_user(db, user_id, title: str, body: str, data: dict | Non
         return 1 if success else 0
 
     return await send_push_to_multiple(tokens, title, body, data)
+
+
+async def send_push_to_trip_passengers(db, trip_id, title: str, body: str, data: dict | None = None):
+    """Send push to all passengers with confirmed/checked_in bookings on a trip."""
+    from sqlalchemy import select
+    from app.models.booking import Booking
+    from app.models.device_token import DeviceToken
+
+    # Get user_ids from confirmed/checked_in bookings on this trip
+    booking_q = await db.execute(
+        select(Booking.user_id).where(
+            Booking.trip_id == trip_id,
+            Booking.status.in_(["confirmed", "checked_in"]),
+        )
+    )
+    user_ids = list(set(booking_q.scalars().all()))
+    if not user_ids:
+        return 0
+
+    token_q = await db.execute(
+        select(DeviceToken.token).where(
+            DeviceToken.user_id.in_(user_ids),
+            DeviceToken.is_active == True,  # noqa: E712
+            DeviceToken.app_type == "customer",
+        )
+    )
+    tokens = list(token_q.scalars().all())
+    if not tokens:
+        return 0
+
+    return await send_push_to_multiple(tokens, title, body, data)

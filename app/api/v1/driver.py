@@ -285,6 +285,37 @@ async def update_trip_status(
         trip.actual_arrival_at = datetime.now(timezone.utc)
 
     await db.flush()
+
+    # Send push notifications to passengers
+    try:
+        from app.services.push_notification_service import send_push_to_trip_passengers
+        route_result = await db.execute(
+            select(Route).options(
+                selectinload(Route.origin_terminal),
+                selectinload(Route.destination_terminal),
+            ).where(Route.id == trip.route_id)
+        )
+        route = route_result.scalar_one_or_none()
+        route_name = route.name if route else "your trip"
+
+        if data.status == "departed":
+            origin = route.origin_terminal.name if route and route.origin_terminal else ""
+            await send_push_to_trip_passengers(
+                db, trip_id, "Trip Departed",
+                f"Your bus {route_name} has departed from {origin}.",
+                {"type": "trip_departed", "trip_id": str(trip_id)},
+            )
+        elif data.status == "arrived":
+            dest = route.destination_terminal.name if route and route.destination_terminal else ""
+            await send_push_to_trip_passengers(
+                db, trip_id, "Trip Arrived",
+                f"Your bus has arrived at {dest}.",
+                {"type": "trip_arrived", "trip_id": str(trip_id)},
+            )
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("Push notification failed: %s", e)
+
     return {"id": str(trip.id), "status": trip.status}
 
 
@@ -335,11 +366,25 @@ async def checkin_passenger(
     await db.flush()
 
     primary = next((p for p in booking.passengers if p.is_primary), booking.passengers[0] if booking.passengers else None)
+    seat_num = primary.seat.seat_number if primary and primary.seat else "?"
+
+    # Push notification to customer
+    try:
+        from app.services.push_notification_service import send_push_to_user
+        await send_push_to_user(
+            db, booking.user_id, "Checked In",
+            f"You're checked in for your trip. Seat {seat_num}. Have a great trip!",
+            {"type": "checked_in", "booking_ref": booking.reference},
+            app_type="customer",
+        )
+    except Exception:
+        pass
+
     return {
         "booking_id": str(booking.id),
         "booking_ref": booking.reference,
         "passenger_name": f"{primary.first_name} {primary.last_name}" if primary else "Unknown",
-        "seat_number": primary.seat.seat_number if primary and primary.seat else None,
+        "seat_number": seat_num,
         "status": booking.status,
         "checked_in_at": str(booking.checked_in_at),
         "message": "Checked in successfully",
