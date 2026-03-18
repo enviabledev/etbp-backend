@@ -1,6 +1,7 @@
 import uuid
 
 from fastapi import APIRouter, Query, Request
+from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.core.exceptions import NotFoundError
@@ -98,3 +99,17 @@ async def get_wallet_transactions(
     return await payment_service.get_wallet_transactions(
         db, current_user.id, page, page_size
     )
+
+
+class WalletPaymentQRRequest(BaseModel):
+    amount: float | None = None
+
+
+@router.post("/wallet/payment-qr")
+async def generate_wallet_payment_qr(
+    data: WalletPaymentQRRequest,
+    db: DBSession,
+    current_user: CurrentUser,
+):
+    from app.services.wallet_qr_service import generate_payment_qr
+    return await generate_payment_qr(db, current_user.id, data.amount)

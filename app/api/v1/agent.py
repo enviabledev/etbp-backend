@@ -7,6 +7,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.core.constants import BookingStatus, PaymentStatus, SeatStatus, UserRole
 from app.core.exceptions import BadRequestError, ForbiddenError, NotFoundError
 from app.core.security import generate_booking_reference, hash_password
@@ -673,3 +674,136 @@ async def change_seat(booking_ref: str, data: ChangeSeatRequest, db: DBSession, 
         "old_seat": old_seat.seat_number if old_seat else None,
         "new_seat": new_seat.seat_number,
     }
+
+
+# ── Agent Token ──
+
+
+@router.post("/generate-token")
+async def generate_token(db: DBSession, agent: AgentContext = AgentDep):
+    from app.services.agent_token_service import generate_agent_token
+    result = await generate_agent_token(str(agent.user_id))
+    await log_action(db, agent.user_id, "agent_token_generated", "agent", str(agent.user_id))
+    return result
+
+
+class VerifyTokenRequest(BaseModel):
+    agent_id: uuid.UUID
+    code: str
+
+
+@router.post("/verify-token")
+async def verify_token(data: VerifyTokenRequest, db: DBSession):
+    from app.services.agent_token_service import verify_agent_token
+    valid = await verify_agent_token(str(data.agent_id), data.code)
+    return {"valid": valid}
+
+
+# ── Wallet QR Payment ──
+
+
+class WalletPaymentRequest(BaseModel):
+    token: str
+    amount: float
+    description: str | None = None
+    booking_id: uuid.UUID | None = None
+
+
+@router.post("/wallet-payment")
+async def process_wallet_qr_payment(data: WalletPaymentRequest, db: DBSession, agent: AgentContext = AgentDep):
+    from app.services.wallet_qr_service import process_wallet_payment
+    result = await process_wallet_payment(
+        db, agent.user_id, data.token, data.amount, data.description, data.booking_id
+    )
+    await log_action(db, agent.user_id, "agent_wallet_payment", "wallet", result.get("transaction_id"), {
+        "amount": data.amount, "customer": result.get("customer_name"),
+    })
+    return result
+
+
+# ── Booking OTP Flow ──
+
+
+class SendCustomerOTPRequest(BaseModel):
+    customer_id: uuid.UUID
+
+
+@router.post("/bookings/send-customer-otp")
+async def send_customer_otp(data: SendCustomerOTPRequest, db: DBSession, agent: AgentContext = AgentDep):
+    from app.models.user import User
+    user_q = await db.execute(select(User).where(User.id == data.customer_id))
+    customer = user_q.scalar_one_or_none()
+    if not customer:
+        raise NotFoundError("Customer not found")
+    if not customer.phone:
+        raise BadRequestError("Customer has no phone number")
+
+    # Send OTP
+    try:
+        from app.integrations.termii import TermiiClient
+        import redis.asyncio as _redis
+
+        if settings.termii_api_key and settings.app_env != "development":
+            client = TermiiClient()
+            result = await client.send_otp(customer.phone)
+            pin_id = result.get("pinId")
+            if pin_id:
+                r = _redis.from_url(settings.redis_url)
+                await r.setex(f"booking_otp:{data.customer_id}", 600, pin_id)
+                await r.aclose()
+        else:
+            # Dev mode — accept any 6-digit code
+            r = _redis.from_url(settings.redis_url)
+            await r.setex(f"booking_otp:{data.customer_id}", 600, "dev_mode")
+            await r.aclose()
+    except Exception:
+        pass
+
+    phone = customer.phone
+    masked = phone[:4] + "****" + phone[-4:] if len(phone) > 8 else phone
+
+    return {"sent": True, "phone_masked": masked}
+
+
+class VerifyCustomerOTPRequest(BaseModel):
+    customer_id: uuid.UUID
+    otp: str
+
+
+@router.post("/bookings/verify-customer-otp")
+async def verify_customer_otp(data: VerifyCustomerOTPRequest, db: DBSession, agent: AgentContext = AgentDep):
+    import redis.asyncio as _redis
+    r = _redis.from_url(settings.redis_url)
+    pin_id = await r.get(f"booking_otp:{data.customer_id}")
+
+    if not pin_id:
+        await r.aclose()
+        raise BadRequestError("OTP expired or not sent. Please resend.")
+
+    pin_id_str = pin_id.decode() if isinstance(pin_id, bytes) else pin_id
+
+    if pin_id_str == "dev_mode":
+        # Dev mode — accept any 6-digit code
+        verified = len(data.otp) == 6
+    else:
+        try:
+            from app.integrations.termii import TermiiClient
+            client = TermiiClient()
+            result = await client.verify_otp(pin_id_str, data.otp)
+            verified = result.get("verified") is True or result.get("status") == "success"
+        except Exception:
+            verified = False
+
+    if verified:
+        # Get customer phone and mark as verified
+        from app.models.user import User
+        user_q = await db.execute(select(User).where(User.id == data.customer_id))
+        customer = user_q.scalar_one()
+        if customer and customer.phone:
+            await r.setex(f"phone_verified:{customer.phone}", 86400, "verified")  # 24h
+        await r.delete(f"booking_otp:{data.customer_id}")
+        await r.aclose()
+        return {"verified": True}
+    else:
+        await r.aclose()
+        raise BadRequestError("Invalid OTP. Please try again.")
