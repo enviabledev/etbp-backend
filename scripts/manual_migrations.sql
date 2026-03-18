@@ -237,6 +237,14 @@ ALTER TABLE trips ADD COLUMN IF NOT EXISTS summary_data JSONB;
 ALTER TABLE trips ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
 
 -- ═══════════════════════════════════════════════════════
+-- USERS TABLE — social auth fields
+-- ═══════════════════════════════════════════════════════
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS apple_id VARCHAR(255) UNIQUE;
+CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id) WHERE google_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_apple_id ON users(apple_id) WHERE apple_id IS NOT NULL;
+
+-- ═══════════════════════════════════════════════════════
 -- Confirm success
 -- ═══════════════════════════════════════════════════════
 

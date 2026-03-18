@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     termii_api_key: str = ""
     termii_sender_id: str = "ETBP"
 
+    # Social Auth
+    google_client_id: str = ""
+    google_client_id_ios: str = ""
+    apple_client_id: str = "ng.enviabletransport.etbpMobile"
+
     # AWS
     aws_access_key_id: str = ""
     aws_secret_access_key: str = ""
