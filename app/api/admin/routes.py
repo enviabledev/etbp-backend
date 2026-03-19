@@ -247,6 +247,44 @@ async def update_route(route_id: uuid.UUID, data: UpdateRouteRequest, db: DBSess
     return route
 
 
+@router.get("/{route_id}/stops", dependencies=[AdminUser])
+async def list_route_stops(route_id: uuid.UUID, db: DBSession):
+    result = await db.execute(
+        select(RouteStop).where(RouteStop.route_id == route_id).order_by(RouteStop.stop_order)
+    )
+    stops = result.scalars().all()
+    return [
+        {
+            "id": str(s.id), "route_id": str(s.route_id), "terminal_id": str(s.terminal_id) if s.terminal_id else None,
+            "name": getattr(s, "name", None) or f"Stop {s.stop_order}",
+            "city": getattr(s, "city", None),
+            "latitude": getattr(s, "latitude", None),
+            "longitude": getattr(s, "longitude", None),
+            "stop_order": s.stop_order,
+            "duration_from_origin_minutes": s.duration_from_origin_minutes,
+            "stop_duration_minutes": getattr(s, "stop_duration_minutes", 0),
+            "is_pickup_point": s.is_pickup_point,
+            "is_dropoff_point": s.is_dropoff_point,
+            "is_rest_stop": getattr(s, "is_rest_stop", True),
+            "notes": getattr(s, "notes", None),
+        }
+        for s in stops
+    ]
+
+
+@router.put("/route-stops/{stop_id}", dependencies=[AdminUser])
+async def update_route_stop(stop_id: uuid.UUID, data: AddRouteStopRequest, db: DBSession):
+    result = await db.execute(select(RouteStop).where(RouteStop.id == stop_id))
+    stop = result.scalar_one_or_none()
+    if not stop:
+        raise NotFoundError("Route stop not found")
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(stop, field, value)
+    await db.flush()
+    await db.refresh(stop)
+    return stop
+
+
 @router.post("/{route_id}/stops", status_code=201, dependencies=[AdminUser])
 async def add_route_stop(route_id: uuid.UUID, data: AddRouteStopRequest, db: DBSession):
     route_result = await db.execute(select(Route).where(Route.id == route_id))
