@@ -56,10 +56,29 @@ async def search_available_trips(
     if route_id:
         query = query.where(Trip.route_id == route_id)
 
+    # Filter out trips that have already departed or are too soon to book
+    from datetime import datetime as dt_cls, timedelta
+    now = dt_cls.now()
+    cutoff = now + timedelta(minutes=30)
+    cutoff_date = cutoff.date()
+    cutoff_time = cutoff.time()
+
     if departure_date:
-        query = query.where(Trip.departure_date == departure_date)
+        if departure_date < date.today():
+            return []  # Past dates have no bookable trips
+        if departure_date == date.today():
+            # Only show trips departing after the 30-min cutoff
+            query = query.where(Trip.departure_date == departure_date, Trip.departure_time > cutoff_time)
+        else:
+            query = query.where(Trip.departure_date == departure_date)
     else:
-        query = query.where(Trip.departure_date >= date.today())
+        from sqlalchemy import or_, and_
+        query = query.where(
+            or_(
+                Trip.departure_date > cutoff_date,
+                and_(Trip.departure_date == cutoff_date, Trip.departure_time > cutoff_time),
+            )
+        )
 
     if origin:
         origin_terminal_ids = select(Terminal.id).where(

@@ -145,3 +145,45 @@ async def release_expired_seat_locks() -> int:
             logger.exception("Error releasing expired seat locks")
 
     return released_count
+
+
+async def cancel_unstarted_past_trips() -> int:
+    """Cancel trips that were never started by the driver (2+ hours overdue)."""
+    now = datetime.now(timezone.utc)
+    cancelled_count = 0
+
+    async with async_session_factory() as db:
+        try:
+            # Find trips still 'scheduled' but departure was 2+ hours ago
+            result = await db.execute(
+                select(Trip).where(Trip.status == "scheduled")
+            )
+            for trip in result.scalars().all():
+                trip_dep = datetime.combine(trip.departure_date, trip.departure_time, tzinfo=timezone.utc) if trip.departure_time else None
+                if not trip_dep or (now - trip_dep).total_seconds() < 7200:
+                    continue  # Less than 2 hours overdue
+
+                trip.status = "cancelled"
+                logger.warning("Auto-cancelled unstarted trip %s (departure was %s)", trip.id, trip_dep)
+
+                # Cancel and refund all bookings
+                booking_q = await db.execute(
+                    select(Booking).where(
+                        Booking.trip_id == trip.id,
+                        Booking.status.in_(["confirmed", "checked_in", "pending"]),
+                    )
+                )
+                for booking in booking_q.scalars().all():
+                    booking.status = BookingStatus.CANCELLED.value
+                    booking.cancellation_reason = "Trip was not started by the driver"
+                    logger.info("Auto-cancelled booking %s for unstarted trip", booking.reference)
+
+                cancelled_count += 1
+
+            if cancelled_count:
+                await db.commit()
+                logger.info("Auto-cancelled %d unstarted past trips", cancelled_count)
+
+        except Exception:
+            await db.rollback()
+            logger.exception("Error cancelling unstarted trips")

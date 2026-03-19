@@ -281,6 +281,20 @@ async def update_trip_status(
 
     if data.status == "departed":
         trip.actual_departure_at = datetime.now(timezone.utc)
+        # Mark no-shows: confirmed passengers who never checked in
+        no_show_q = await db.execute(
+            select(Booking).where(
+                Booking.trip_id == trip_id,
+                Booking.status == "confirmed",
+            )
+        )
+        for ns_booking in no_show_q.scalars().all():
+            ns_booking.status = "no_show"
+            try:
+                from app.services.push_notification_service import send_push_to_user
+                await send_push_to_user(db, ns_booking.user_id, "Missed Trip", f"You missed your trip. Booking {ns_booking.reference} has been marked as a no-show.", {"type": "no_show", "booking_ref": ns_booking.reference}, "customer")
+            except Exception:
+                pass
     elif data.status in ("arrived", "completed"):
         trip.actual_arrival_at = datetime.now(timezone.utc)
         if data.status == "completed":

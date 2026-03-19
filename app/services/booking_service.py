@@ -46,7 +46,21 @@ async def create_booking(
     if not trip:
         raise NotFoundError("Trip not found")
     if trip.status not in ("scheduled", "boarding"):
-        raise BadRequestError("Trip is not available for booking")
+        status_messages = {
+            "departed": "This trip has already departed.",
+            "en_route": "This trip is already en route.",
+            "arrived": "This trip has arrived at its destination.",
+            "completed": "This trip has been completed.",
+            "cancelled": "This trip has been cancelled.",
+        }
+        raise BadRequestError(status_messages.get(trip.status, f"Trip is not available for booking (status: {trip.status})."))
+
+    # Check departure time hasn't passed (30-min booking cutoff)
+    trip_departure = datetime.combine(trip.departure_date, trip.departure_time, tzinfo=timezone.utc)
+    booking_cutoff = datetime.now(timezone.utc) + timedelta(minutes=30)
+    if trip_departure <= booking_cutoff:
+        raise BadRequestError("This trip departs too soon to book online. It departs in less than 30 minutes.")
+
     if trip.available_seats < len(data.passengers):
         raise BadRequestError("Not enough seats available")
 

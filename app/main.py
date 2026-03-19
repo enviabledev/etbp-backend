@@ -22,7 +22,7 @@ logging.basicConfig(
 
 async def _background_loop():
     """Background loop: booking expiry (5min), reminders (15min)."""
-    from app.tasks.booking_expiry import expire_pending_bookings, release_expired_seat_locks
+    from app.tasks.booking_expiry import expire_pending_bookings, release_expired_seat_locks, cancel_unstarted_past_trips
     from app.tasks.reminder_task import send_trip_reminders
 
     cycle = 0
@@ -30,6 +30,8 @@ async def _background_loop():
         try:
             await expire_pending_bookings()
             await release_expired_seat_locks()
+            # Cancel unstarted past trips every cycle
+            await cancel_unstarted_past_trips()
             # Run reminders every 3rd cycle (15 minutes)
             if cycle % 3 == 0:
                 await send_trip_reminders()

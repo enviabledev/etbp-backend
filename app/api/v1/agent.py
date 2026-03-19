@@ -455,6 +455,11 @@ async def create_agent_booking(data: AgentBookingRequest, db: DBSession, agent: 
     if trip.status not in ("scheduled", "boarding"):
         raise BadRequestError("Trip is not available for booking")
 
+    # 15-min cutoff for agent bookings (shorter than customer 30-min)
+    trip_dep = datetime.combine(trip.departure_date, trip.departure_time, tzinfo=timezone.utc)
+    if trip_dep <= datetime.now(timezone.utc) + timedelta(minutes=15):
+        raise BadRequestError("This trip departs too soon to book. It departs in less than 15 minutes.")
+
     # Validate seats
     seat_ids = [s.seat_id for s in data.seats]
     seats_q = await db.execute(select(TripSeat).where(TripSeat.id.in_(seat_ids), TripSeat.trip_id == data.trip_id))
