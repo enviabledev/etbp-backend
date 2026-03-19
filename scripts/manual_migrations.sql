@@ -564,7 +564,7 @@ CREATE TABLE IF NOT EXISTS messages (
     sender_id UUID NOT NULL REFERENCES users(id),
     content TEXT NOT NULL,
     message_type VARCHAR(20) NOT NULL DEFAULT 'text',
-    metadata JSONB,
+    extra_data JSONB,
     is_read BOOLEAN DEFAULT FALSE,
     read_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
