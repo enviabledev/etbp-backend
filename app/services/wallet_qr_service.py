@@ -81,8 +81,10 @@ async def process_wallet_payment(
 
     # Debit wallet
     wallet = await get_or_create_wallet(db, customer_id)
-    if float(wallet.balance) < final_amount:
-        raise BadRequestError(f"Insufficient wallet balance. Need {final_amount}, have {float(wallet.balance)}")
+    balance = float(wallet.balance)
+    if balance < final_amount:
+        shortfall = final_amount - balance
+        raise BadRequestError(f"Insufficient wallet balance. Required: ₦{final_amount:,.0f}, Available: ₦{balance:,.0f}. Customer needs to top up ₦{shortfall:,.0f}.")
 
     wallet.balance = float(wallet.balance) - final_amount
 
