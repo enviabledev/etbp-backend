@@ -398,9 +398,30 @@ async def list_widgets(db: DBSession, current_user: CurrentUser):
         select(DashboardWidget).where(DashboardWidget.user_id == current_user.id, DashboardWidget.is_visible == True)  # noqa: E712
         .order_by(DashboardWidget.created_at)
     )
+    widgets = result.scalars().all()
+
+    # Auto-create defaults for new users
+    if not widgets:
+        defaults = [
+            ("Revenue This Month", "stat_card", "revenue", {"x": 0, "y": 0, "w": 3, "h": 2}),
+            ("Bookings Today", "stat_card", "bookings", {"x": 3, "y": 0, "w": 3, "h": 2}),
+            ("Occupancy Rate", "stat_card", "occupancy", {"x": 6, "y": 0, "w": 3, "h": 2}),
+            ("Customer Satisfaction", "stat_card", "satisfaction", {"x": 9, "y": 0, "w": 3, "h": 2}),
+            ("Revenue Trend", "line_chart", "revenue", {"x": 0, "y": 2, "w": 6, "h": 4}),
+            ("Bookings by Route", "bar_chart", "bookings", {"x": 6, "y": 2, "w": 6, "h": 4}),
+        ]
+        for title, wtype, source, pos in defaults:
+            w = DashboardWidget(user_id=current_user.id, widget_type=wtype, data_source=source, title=title, position=pos)
+            db.add(w)
+        await db.flush()
+        result2 = await db.execute(
+            select(DashboardWidget).where(DashboardWidget.user_id == current_user.id).order_by(DashboardWidget.created_at)
+        )
+        widgets = result2.scalars().all()
+
     return [
         {"id": str(w.id), "widget_type": w.widget_type, "data_source": w.data_source, "title": w.title, "config": w.config, "position": w.position}
-        for w in result.scalars().all()
+        for w in widgets
     ]
 
 
