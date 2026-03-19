@@ -50,11 +50,19 @@ async def process_wallet_payment(
     booking_id: uuid.UUID | None = None,
 ) -> dict:
     """Validate token and debit customer wallet."""
+    import logging
+    logger = logging.getLogger(__name__)
+
+    # Strip QR prefix if present (belt-and-suspenders — mobile should also strip)
+    if token.startswith("ETBP-PAY:"):
+        token = token[len("ETBP-PAY:"):]
+
     r = aioredis.from_url(settings.redis_url)
     raw = await r.get(f"wallet_qr:{token}")
     if not raw:
         await r.aclose()
-        raise NotFoundError("Payment token expired or invalid")
+        logger.warning("Wallet QR token not found: %s...", token[:20])
+        raise NotFoundError("Payment token expired or invalid. Ask the customer to generate a new QR code.")
 
     token_data = json.loads(raw.decode())
     customer_id = uuid.UUID(token_data["user_id"])
@@ -64,7 +72,7 @@ async def process_wallet_payment(
     final_amount = token_amount if token_amount else amount
     if not final_amount or final_amount <= 0:
         await r.aclose()
-        raise BadRequestError("Amount is required")
+        raise BadRequestError("Amount is required. The customer's QR code did not include a pre-set amount and no amount was provided.")
 
     # Delete token (one-time use)
     await r.delete(f"wallet_qr:{token}")
