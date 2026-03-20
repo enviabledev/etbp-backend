@@ -239,6 +239,23 @@ async def get_trip_manifest(trip_id: uuid.UUID, db: DBSession, driver: Driver = 
                 "checked_in_at": str(booking.checked_in_at) if booking.checked_in_at and p.checked_in else None,
             })
 
+    # Enrich with addon info per booking
+    from app.models.booking_addon import BookingAddon
+    booking_ids = list(set(m["booking_id"] for m in manifest))
+    addon_q = await db.execute(
+        select(BookingAddon).where(
+            BookingAddon.booking_id.in_([uuid.UUID(bid) for bid in booking_ids]),
+            BookingAddon.addon_type == "extra_luggage",
+        )
+    )
+    addon_map = {}
+    for a in addon_q.scalars().all():
+        bid = str(a.booking_id)
+        addon_map[bid] = addon_map.get(bid, 0) + a.quantity
+
+    for m in manifest:
+        m["extra_luggage"] = addon_map.get(m["booking_id"], 0)
+
     manifest.sort(key=lambda m: m["seat_number"] or "")
     return {"trip_id": str(trip_id), "passengers": manifest, "total": len(manifest)}
 

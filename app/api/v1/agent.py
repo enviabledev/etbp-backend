@@ -274,6 +274,23 @@ async def get_agent_manifest(trip_id: uuid.UUID, db: DBSession, agent: AgentCont
                 "payment_status": "paid" if payment and payment.status in ("successful", "completed") else "unpaid",
                 "amount_due": float(booking.total_amount) if not (payment and payment.status in ("successful", "completed")) else 0,
             })
+    # Enrich with addon info per booking
+    from app.models.booking_addon import BookingAddon
+    booking_ids = list(set(m["booking_id"] for m in manifest))
+    addon_q = await db.execute(
+        select(BookingAddon).where(
+            BookingAddon.booking_id.in_([uuid.UUID(bid) for bid in booking_ids]),
+            BookingAddon.addon_type == "extra_luggage",
+        )
+    )
+    addon_map = {}
+    for a in addon_q.scalars().all():
+        bid = str(a.booking_id)
+        addon_map[bid] = addon_map.get(bid, 0) + a.quantity
+
+    for m in manifest:
+        m["extra_luggage"] = addon_map.get(m["booking_id"], 0)
+
     manifest.sort(key=lambda m: m["seat_number"] or "")
     return {"trip_id": str(trip_id), "passengers": manifest, "total": len(manifest)}
 
@@ -635,6 +652,14 @@ async def scan_booking_lookup(booking_ref: str, db: DBSession, agent: AgentConte
     agent_terminal_q = await db.execute(select(Terminal.name).where(Terminal.id == agent.terminal_id))
     agent_terminal_name = agent_terminal_q.scalar()
 
+    # Include addons
+    from app.models.booking_addon import BookingAddon
+    addon_q = await db.execute(
+        select(BookingAddon).where(BookingAddon.booking_id == booking.id, BookingAddon.addon_type == "extra_luggage")
+    )
+    addons = addon_q.scalars().all()
+    total_luggage = sum(a.quantity for a in addons)
+
     return {
         "booking": {
             "id": str(booking.id),
@@ -646,6 +671,7 @@ async def scan_booking_lookup(booking_ref: str, db: DBSession, agent: AgentConte
             "payment_method": payment.method if payment else (booking.payment_method_hint or None),
             "payment_deadline": str(booking.payment_deadline) if booking.payment_deadline else None,
             "created_at": str(booking.created_at),
+            "extra_luggage_count": total_luggage,
         },
         "trip": {
             "id": str(trip.id),
