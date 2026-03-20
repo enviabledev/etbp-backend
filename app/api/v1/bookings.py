@@ -87,7 +87,25 @@ async def list_my_bookings(
     result = await db.execute(query)
     items = result.scalars().all()
 
-    return {"items": items, "total": total, "page": page, "page_size": page_size}
+    # Enrich with extra luggage counts
+    from app.models.booking_addon import BookingAddon
+    booking_ids = [b.id for b in items]
+    luggage_map: dict = {}
+    if booking_ids:
+        addon_result = await db.execute(
+            select(BookingAddon.booking_id, func.sum(BookingAddon.quantity))
+            .where(BookingAddon.booking_id.in_(booking_ids), BookingAddon.addon_type == "extra_luggage")
+            .group_by(BookingAddon.booking_id)
+        )
+        luggage_map = {row[0]: int(row[1]) for row in addon_result.all()}
+
+    enriched = []
+    for b in items:
+        d = BookingDetailResponse.model_validate(b).model_dump()
+        d["extra_luggage_count"] = luggage_map.get(b.id, 0)
+        enriched.append(d)
+
+    return {"items": enriched, "total": total, "page": page, "page_size": page_size}
 
 
 @router.get("/{reference}/reschedule-options")
