@@ -144,6 +144,23 @@ async def search_available_trips(
             "estimated_duration_minutes": r.estimated_duration_minutes,
         })
 
+        # Determine if this is an exact or alternative match
+        match_type = "exact"  # default
+        if origin:
+            # Check if origin terminal matches the searched terminal exactly
+            origin_term = trip.route.origin_terminal
+            if origin_term:
+                origin_upper = origin.upper()
+                if origin_term.code == origin_upper or origin_term.city.lower() == origin.lower():
+                    match_type = "exact"
+                else:
+                    match_type = "alternative"
+
+        trips[-1]["match_type"] = match_type
+
+    # Sort: exact matches first, then alternatives, each group by departure_time
+    trips.sort(key=lambda t: (0 if t.get("match_type") == "exact" else 1, str(t.get("departure_time", ""))))
+
     return trips
 
 
