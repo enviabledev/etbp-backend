@@ -307,8 +307,8 @@ async def agent_checkin(trip_id: uuid.UUID, booking_id: uuid.UUID, db: DBSession
     if booking.status == "checked_in":
         raise BadRequestError("Already checked in")
 
-    # Verify payment
-    if not await _booking_is_paid(db, booking.id):
+    # A 'confirmed' booking is paid — check status, not payments table
+    if booking.status == "pending":
         from fastapi.responses import JSONResponse
         return JSONResponse(status_code=402, content={
             "error": "payment_required",
@@ -318,6 +318,9 @@ async def agent_checkin(trip_id: uuid.UUID, booking_id: uuid.UUID, db: DBSession
             "booking_id": str(booking.id),
             "message": "Payment required before check-in",
         })
+
+    if booking.status not in ("confirmed",):
+        raise BadRequestError(f"Cannot check in a {booking.status} booking")
 
     booking.status = BookingStatus.CHECKED_IN.value
     booking.checked_in_at = datetime.now(timezone.utc)

@@ -275,6 +275,16 @@ async def update_trip_status(
     if data.status not in allowed:
         raise BadRequestError(f"Cannot transition from '{trip.status}' to '{data.status}'. Allowed: {allowed}")
 
+    # Prevent starting trip too early — must be on departure day (or evening before for early trips)
+    if data.status in ("boarding", "departed"):
+        from datetime import timedelta as td
+        now = datetime.now(timezone.utc)
+        dep_date = trip.departure_date
+        if now.date() < dep_date:
+            day_before = dep_date - td(days=1)
+            if not (now.date() == day_before and now.hour >= 22):
+                raise BadRequestError(f"Cannot start this trip yet. It is scheduled for {dep_date}. You can begin boarding on the day of departure.")
+
     trip.status = data.status
     if data.notes:
         trip.notes = (trip.notes or "") + f"\n[{data.status}] {data.notes}"
@@ -299,6 +309,12 @@ async def update_trip_status(
         trip.actual_arrival_at = datetime.now(timezone.utc)
         if data.status == "completed":
             trip.completed_at = datetime.now(timezone.utc)
+            # Mark all checked-in bookings as completed
+            completed_q = await db.execute(
+                select(Booking).where(Booking.trip_id == trip_id, Booking.status == "checked_in")
+            )
+            for cb in completed_q.scalars().all():
+                cb.status = "completed"
             try:
                 from app.services.trip_summary_service import generate_trip_summary
                 summary = await generate_trip_summary(db, trip_id)
@@ -368,12 +384,8 @@ async def checkin_passenger(
     if booking.status == "checked_in":
         raise BadRequestError("Booking already checked in")
 
-    # Verify payment
-    from app.models.payment import Payment as PaymentModel
-    pay_q = await db.execute(
-        select(PaymentModel).where(PaymentModel.booking_id == booking.id, PaymentModel.status.in_(["successful", "completed"]))
-    )
-    if not pay_q.scalar_one_or_none():
+    # A 'confirmed' booking is paid — no need to separately query payments table
+    if booking.status == "pending":
         from fastapi.responses import JSONResponse
         return JSONResponse(status_code=402, content={
             "error": "payment_required",
@@ -381,6 +393,9 @@ async def checkin_passenger(
             "booking_ref": booking.reference,
             "message": "Payment required. Direct passenger to the terminal agent.",
         })
+
+    if booking.status not in ("confirmed",):
+        raise BadRequestError(f"Cannot check in a {booking.status} booking")
 
     booking.status = BookingStatus.CHECKED_IN.value
     booking.checked_in_at = datetime.now(timezone.utc)
