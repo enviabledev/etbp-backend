@@ -946,15 +946,44 @@ async def generate_token(db: DBSession, agent: AgentContext = AgentDep):
 
 
 class VerifyTokenRequest(BaseModel):
-    agent_id: uuid.UUID
+    email: str
     code: str
 
 
 @router.post("/verify-token")
 async def verify_token(data: VerifyTokenRequest, db: DBSession):
     from app.services.agent_token_service import verify_agent_token
-    valid = await verify_agent_token(str(data.agent_id), data.code)
-    return {"valid": valid}
+    from app.core.security import create_access_token, create_refresh_token, hash_token
+    from app.models.user import RefreshToken
+
+    # Look up agent by email
+    result = await db.execute(
+        select(User).where(User.email == data.email.lower())
+    )
+    user = result.scalar_one_or_none()
+    if not user or user.role not in ("agent", "terminal_agent"):
+        raise BadRequestError("Agent not found")
+    if not user.is_active:
+        raise BadRequestError("Account is deactivated")
+
+    valid = await verify_agent_token(str(user.id), data.code)
+    if not valid:
+        raise BadRequestError("Invalid or expired token")
+
+    # Generate JWT tokens
+    token_data = {"sub": str(user.id), "role": user.role}
+    access_token = create_access_token(token_data)
+    refresh_token = create_refresh_token(token_data)
+
+    rt = RefreshToken(
+        user_id=user.id,
+        token_hash=hash_token(refresh_token),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=30),
+    )
+    db.add(rt)
+    await db.flush()
+
+    return {"access_token": access_token, "refresh_token": refresh_token}
 
 
 # ── Wallet QR Payment ──
