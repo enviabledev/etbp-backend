@@ -359,7 +359,7 @@ async def pay_booking(booking_ref: str, data: BookingPayRequest, db: DBSession, 
         booking_id=booking.id, user_id=booking.user_id,
         amount=float(booking.total_amount), method=data.payment_method,
         status=PaymentStatus.SUCCESSFUL.value, gateway="terminal",
-        paid_at=datetime.now(timezone.utc), gateway_reference=data.payment_reference,
+        paid_at=datetime.now(timezone.utc), gateway_reference=data.payment_reference or f"AGENT-{booking_ref.upper()}",
     )
     db.add(payment)
     booking.status = BookingStatus.CONFIRMED.value
@@ -526,7 +526,7 @@ async def _create_agent_booking_inner(data: AgentBookingRequest, db: DBSession, 
         amount=total, method=data.payment_method,
         status=PaymentStatus.SUCCESSFUL.value,
         gateway="terminal", paid_at=datetime.now(timezone.utc),
-        gateway_reference=data.payment_reference,
+        gateway_reference=data.payment_reference or f"AGENT-{reference}",
     )
     db.add(payment)
     await db.flush()

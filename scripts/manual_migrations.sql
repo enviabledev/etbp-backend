@@ -14,6 +14,11 @@ DO $$ BEGIN ALTER TYPE booking_status ADD VALUE IF NOT EXISTS 'expired'; EXCEPTI
 DO $$ BEGIN ALTER TYPE booking_status ADD VALUE IF NOT EXISTS 'no_show'; EXCEPTION WHEN OTHERS THEN NULL; END $$;
 DO $$ BEGIN ALTER TYPE booking_status ADD VALUE IF NOT EXISTS 'checked_in'; EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
+DO $$ BEGIN ALTER TYPE payment_method ADD VALUE IF NOT EXISTS 'pos'; EXCEPTION WHEN OTHERS THEN NULL; END $$;
+DO $$ BEGIN ALTER TYPE payment_method ADD VALUE IF NOT EXISTS 'transfer'; EXCEPTION WHEN OTHERS THEN NULL; END $$;
+DO $$ BEGIN ALTER TYPE payment_method ADD VALUE IF NOT EXISTS 'cash'; EXCEPTION WHEN OTHERS THEN NULL; END $$;
+DO $$ BEGIN ALTER TYPE payment_method ADD VALUE IF NOT EXISTS 'mobile_money'; EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
 -- ═══════════════════════════════════════════════════════
 -- USERS TABLE — new columns
 -- ═══════════════════════════════════════════════════════
