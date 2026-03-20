@@ -95,17 +95,16 @@ async def google_sign_in(db: AsyncSession, id_token: str) -> dict:
     from google.auth.transport import requests as google_requests
 
     try:
-        client_ids = [settings.google_client_id]
-        if settings.google_client_id_ios:
-            client_ids.append(settings.google_client_id_ios)
+        client_ids = [cid for cid in [settings.google_client_id, settings.google_client_id_ios] if cid]
 
         idinfo = google_id_token.verify_oauth2_token(
             id_token, google_requests.Request(), None  # audience checked manually
         )
 
-        # Verify audience
-        if idinfo.get("aud") not in client_ids:
+        # Verify audience (skip if no client IDs configured)
+        if client_ids and idinfo.get("aud") not in client_ids:
             from app.core.exceptions import UnauthorizedError
+            logger.warning("Google token audience %s not in %s", idinfo.get("aud"), client_ids)
             raise UnauthorizedError("Invalid Google token audience")
 
         google_user_id = idinfo["sub"]

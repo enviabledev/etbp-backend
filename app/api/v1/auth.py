@@ -64,8 +64,17 @@ class LinkSocialRequest(BaseModel):
 
 @router.post("/google")
 async def google_auth(data: GoogleAuthRequest, db: DBSession):
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info("Google login attempt, token length: %d", len(data.id_token))
     from app.services.social_auth_service import google_sign_in
-    return await google_sign_in(db, data.id_token)
+    try:
+        result = await google_sign_in(db, data.id_token)
+        logger.info("Google login success, is_new_user: %s", result.get("is_new_user"))
+        return result
+    except Exception as e:
+        logger.error("Google login failed: %s", e)
+        raise
 
 
 @router.post("/apple")
