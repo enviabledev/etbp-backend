@@ -275,15 +275,20 @@ async def update_trip_status(
     if data.status not in allowed:
         raise BadRequestError(f"Cannot transition from '{trip.status}' to '{data.status}'. Allowed: {allowed}")
 
-    # Prevent starting trip too early — must be on departure day (or evening before for early trips)
+    # Prevent boarding/departure before scheduled time
     if data.status in ("boarding", "departed"):
-        from datetime import timedelta as td
+        dep_dt = datetime.combine(trip.departure_date, trip.departure_time, tzinfo=timezone.utc)
         now = datetime.now(timezone.utc)
-        dep_date = trip.departure_date
-        if now.date() < dep_date:
-            day_before = dep_date - td(days=1)
-            if not (now.date() == day_before and now.hour >= 22):
-                raise BadRequestError(f"Cannot start this trip yet. It is scheduled for {dep_date}. You can begin boarding on the day of departure.")
+        if now < dep_dt:
+            minutes_early = int((dep_dt - now).total_seconds() / 60)
+            raise BadRequestError(
+                f"This trip is scheduled for {trip.departure_time.strftime('%I:%M %p')}. "
+                f"You cannot start yet. Please wait {minutes_early} more minute{'s' if minutes_early != 1 else ''}."
+            )
+
+    # Require inspection before departure
+    if data.status == "departed" and not trip.inspection_data:
+        raise BadRequestError("You must complete the pre-trip vehicle inspection before departing. Go to the trip detail and tap 'Vehicle Inspection'.")
 
     trip.status = data.status
     if data.notes:
@@ -531,13 +536,14 @@ async def submit_inspection(
     if trip.driver_id != driver.id:
         raise ForbiddenError("This trip is not assigned to you")
 
-    # Inspection only available within 3 hours of departure (but also after departure for late starts)
+    # Inspection only available within 2 hours of departure (but also after departure for late starts)
     from datetime import timedelta
     dep_dt = datetime.combine(trip.departure_date, trip.departure_time, tzinfo=timezone.utc)
     now = datetime.now(timezone.utc)
     hours_until = (dep_dt - now).total_seconds() / 3600
-    if hours_until > 3:
-        raise BadRequestError(f"Inspection opens 3 hours before departure. You can start at {(dep_dt - timedelta(hours=3)).strftime('%I:%M %p')}.")
+    if hours_until > 2:
+        opens_at = (dep_dt - timedelta(hours=2)).strftime('%I:%M %p')
+        raise BadRequestError(f"Inspection opens 2 hours before departure ({trip.departure_time.strftime('%I:%M %p')}). You can start at {opens_at}.")
 
     inspection = {
         "inspected_at": str(datetime.now(timezone.utc)),

@@ -329,6 +329,46 @@ async def regenerate_trip_seats(trip_id: uuid.UUID, db: DBSession):
     }
 
 
+@router.get("/trips/{trip_id}/inspection", dependencies=[AdminUser])
+async def get_trip_inspection(trip_id: uuid.UUID, db: DBSession):
+    result = await db.execute(select(Trip).where(Trip.id == trip_id))
+    trip = result.scalar_one_or_none()
+    if not trip:
+        raise NotFoundError("Trip not found")
+
+    if not trip.inspection_data:
+        return {"completed": False}
+
+    data = trip.inspection_data
+    items = data.get("items", [])
+    passed = sum(1 for i in items if i.get("status") == "pass")
+    failed = sum(1 for i in items if i.get("status") == "fail")
+    overall = "passed" if failed == 0 else "passed_with_issues" if passed > failed else "failed"
+
+    driver_name = None
+    driver_id = data.get("driver_id")
+    if driver_id:
+        from app.models.driver import Driver
+        from app.models.user import User
+        drv_q = await db.execute(select(Driver).where(Driver.id == uuid.UUID(driver_id)))
+        drv = drv_q.scalar_one_or_none()
+        if drv:
+            usr_q = await db.execute(select(User.first_name, User.last_name).where(User.id == drv.user_id))
+            usr = usr_q.one_or_none()
+            if usr:
+                driver_name = f"{usr[0]} {usr[1]}"
+
+    return {
+        "completed": True,
+        "completed_at": data.get("inspected_at"),
+        "completed_by": {"id": driver_id, "name": driver_name},
+        "items": items,
+        "passed_count": passed,
+        "failed_count": failed,
+        "overall": overall,
+    }
+
+
 # ── Bulk Trip Generation ──
 
 
