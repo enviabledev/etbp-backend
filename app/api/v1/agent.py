@@ -444,6 +444,18 @@ class AgentBookingRequest(BaseModel):
 
 @router.post("/bookings", status_code=201)
 async def create_agent_booking(data: AgentBookingRequest, db: DBSession, agent: AgentContext = AgentDep):
+    import logging
+    logger = logging.getLogger(__name__)
+    try:
+        return await _create_agent_booking_inner(data, db, agent)
+    except (BadRequestError, NotFoundError, ForbiddenError):
+        raise
+    except Exception as e:
+        logger.exception("Agent booking failed: %s", e)
+        raise
+
+
+async def _create_agent_booking_inner(data: AgentBookingRequest, db: DBSession, agent: AgentContext):
     # Validate customer
     cust_q = await db.execute(select(User).where(User.id == data.customer_id))
     customer = cust_q.scalar_one_or_none()

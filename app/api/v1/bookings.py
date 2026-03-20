@@ -246,6 +246,50 @@ async def get_calendar_data(reference: str, db: DBSession, current_user: Current
     }
 
 
+@router.get("/{reference}/cancel-preview")
+async def cancel_preview(reference: str, db: DBSession, current_user: CurrentUser):
+    """Preview refund amount before cancelling."""
+    booking = await booking_service.get_booking_by_reference(db, reference, current_user.id)
+    if booking.status not in ("confirmed", "pending"):
+        from app.core.exceptions import BadRequestError
+        raise BadRequestError(f"Cannot cancel a {booking.status} booking")
+
+    from app.models.schedule import Trip
+    trip_result = await db.execute(select(Trip).where(Trip.id == booking.trip_id))
+    trip = trip_result.scalar_one()
+
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    departure = datetime.combine(trip.departure_date, trip.departure_time, tzinfo=timezone.utc)
+    hours_before = (departure - now).total_seconds() / 3600
+
+    total = float(booking.total_amount)
+    if hours_before > 24:
+        refund_pct = 90
+    elif hours_before > 12:
+        refund_pct = 50
+    else:
+        refund_pct = 0
+
+    refund_amount = round(total * refund_pct / 100, 2)
+    fee = round(total - refund_amount, 2)
+
+    messages = {
+        90: f"You'll receive a 90% refund of \u20a6{refund_amount:,.0f} to your wallet.",
+        50: f"A 50% cancellation fee applies. You'll receive \u20a6{refund_amount:,.0f} refund.",
+        0: "No refund available — trip departs in less than 12 hours.",
+    }
+
+    return {
+        "total_amount": total,
+        "refund_amount": refund_amount,
+        "refund_percentage": refund_pct,
+        "cancellation_fee": fee,
+        "policy_message": messages[refund_pct],
+        "hours_before_departure": round(hours_before, 1),
+    }
+
+
 @router.get("/{reference}", response_model=BookingDetailResponse)
 async def get_booking_by_reference(
     reference: str, db: DBSession, current_user: CurrentUser

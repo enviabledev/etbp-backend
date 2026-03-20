@@ -314,7 +314,13 @@ async def update_trip_status(
                 select(Booking).where(Booking.trip_id == trip_id, Booking.status == "checked_in")
             )
             for cb in completed_q.scalars().all():
-                cb.status = "completed"
+                cb.status = BookingStatus.COMPLETED.value
+            # Mark any remaining confirmed bookings as no-show (missed departure)
+            remaining_q = await db.execute(
+                select(Booking).where(Booking.trip_id == trip_id, Booking.status == "confirmed")
+            )
+            for rb in remaining_q.scalars().all():
+                rb.status = BookingStatus.NO_SHOW.value
             try:
                 from app.services.trip_summary_service import generate_trip_summary
                 summary = await generate_trip_summary(db, trip_id)
@@ -524,6 +530,14 @@ async def submit_inspection(
         raise NotFoundError("Trip not found")
     if trip.driver_id != driver.id:
         raise ForbiddenError("This trip is not assigned to you")
+
+    # Inspection only available within 3 hours of departure (but also after departure for late starts)
+    from datetime import timedelta
+    dep_dt = datetime.combine(trip.departure_date, trip.departure_time, tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    hours_until = (dep_dt - now).total_seconds() / 3600
+    if hours_until > 3:
+        raise BadRequestError(f"Inspection opens 3 hours before departure. You can start at {(dep_dt - timedelta(hours=3)).strftime('%I:%M %p')}.")
 
     inspection = {
         "inspected_at": str(datetime.now(timezone.utc)),
