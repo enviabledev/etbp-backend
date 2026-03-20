@@ -393,7 +393,8 @@ async def checkin_passenger(
     if not booking:
         raise NotFoundError("Booking not found on this trip")
     if booking.status == "checked_in":
-        raise BadRequestError("Booking already checked in")
+        from app.core.exceptions import ConflictError
+        raise ConflictError("Booking already checked in")
 
     # A 'confirmed' booking is paid — no need to separately query payments table
     if booking.status == "pending":

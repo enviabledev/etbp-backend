@@ -113,6 +113,34 @@ async def create_booking(
     departure_dt = datetime.combine(trip.departure_date, trip.departure_time, tzinfo=timezone.utc)
     payment_deadline = _calc_payment_deadline(now, departure_dt, method)
 
+    # Handle corporate billing
+    corp_account = None
+    if method == "corporate":
+        from app.models.corporate import CorporateEmployee, CorporateAccount
+        emp_q = await db.execute(
+            select(CorporateEmployee).where(
+                CorporateEmployee.user_id == user_id,
+                CorporateEmployee.is_active == True,  # noqa: E712
+            )
+        )
+        corp_emp = emp_q.scalar_one_or_none()
+        if not corp_emp:
+            raise BadRequestError("You are not linked to a corporate account.")
+
+        acc_q = await db.execute(select(CorporateAccount).where(CorporateAccount.id == corp_emp.corporate_account_id))
+        corp_account = acc_q.scalar_one_or_none()
+        if not corp_account or corp_account.status != "active":
+            raise BadRequestError("Your corporate account is not active.")
+
+        if float(corp_account.current_balance) + total_amount > float(corp_account.credit_limit):
+            available = float(corp_account.credit_limit) - float(corp_account.current_balance)
+            raise BadRequestError(f"Insufficient corporate credit. Available: \u20a6{available:,.0f}, Required: \u20a6{total_amount:,.0f}")
+
+        # Apply corporate discount
+        if corp_account.discount_percentage and float(corp_account.discount_percentage) > 0:
+            discount = total_amount * (float(corp_account.discount_percentage) / 100)
+            total_amount = round(total_amount - discount, 2)
+
     booking = Booking(
         reference=reference,
         user_id=user_id,
@@ -128,6 +156,14 @@ async def create_booking(
         payment_method_hint=method,
         payment_deadline=payment_deadline,
     )
+
+    # Finalize corporate booking
+    if method == "corporate" and corp_account:
+        booking.status = "confirmed"
+        booking.corporate_account_id = corp_account.id
+        booking.payment_deadline = None  # No payment needed
+        corp_account.current_balance = float(corp_account.current_balance) + total_amount
+
     db.add(booking)
     await db.flush()
 
