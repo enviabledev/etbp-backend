@@ -34,12 +34,19 @@ class TerminalBriefResponse(BaseSchema):
 
 class RouteStopResponse(BaseSchema):
     id: uuid.UUID
-    terminal: TerminalResponse
+    name: str | None
+    city: str | None
+    terminal: TerminalResponse | None
+    latitude: float | None
+    longitude: float | None
     stop_order: int
     duration_from_origin_minutes: int | None
+    stop_duration_minutes: int
     price_from_origin: float | None
     is_pickup_point: bool
     is_dropoff_point: bool
+    is_rest_stop: bool
+    notes: str | None
 
 
 class RouteResponse(BaseSchema):

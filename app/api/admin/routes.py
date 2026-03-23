@@ -67,12 +67,19 @@ class UpdateRouteRequest(BaseModel):
 
 
 class AddRouteStopRequest(BaseModel):
-    terminal_id: uuid.UUID
+    name: str
+    city: str | None = None
+    terminal_id: uuid.UUID | None = None
+    latitude: float
+    longitude: float
     stop_order: int
-    duration_from_origin_minutes: int | None = None
+    duration_from_origin_minutes: int = 0
+    stop_duration_minutes: int = 0
     price_from_origin: float | None = None
     is_pickup_point: bool = True
     is_dropoff_point: bool = True
+    is_rest_stop: bool = True
+    notes: str | None = None
 
 
 # ── Terminals ──
@@ -256,17 +263,17 @@ async def list_route_stops(route_id: uuid.UUID, db: DBSession):
     return [
         {
             "id": str(s.id), "route_id": str(s.route_id), "terminal_id": str(s.terminal_id) if s.terminal_id else None,
-            "name": getattr(s, "name", None) or f"Stop {s.stop_order}",
-            "city": getattr(s, "city", None),
-            "latitude": getattr(s, "latitude", None),
-            "longitude": getattr(s, "longitude", None),
+            "name": s.name or f"Stop {s.stop_order}",
+            "city": s.city,
+            "latitude": s.latitude,
+            "longitude": s.longitude,
             "stop_order": s.stop_order,
             "duration_from_origin_minutes": s.duration_from_origin_minutes,
-            "stop_duration_minutes": getattr(s, "stop_duration_minutes", 0),
+            "stop_duration_minutes": s.stop_duration_minutes,
             "is_pickup_point": s.is_pickup_point,
             "is_dropoff_point": s.is_dropoff_point,
-            "is_rest_stop": getattr(s, "is_rest_stop", True),
-            "notes": getattr(s, "notes", None),
+            "is_rest_stop": s.is_rest_stop,
+            "notes": s.notes,
         }
         for s in stops
     ]

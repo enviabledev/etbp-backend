@@ -86,14 +86,21 @@ class RouteStop(Base):
     route_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("routes.id", ondelete="CASCADE"), nullable=False
     )
-    terminal_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("terminals.id"), nullable=False
+    terminal_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("terminals.id"), nullable=True
     )
+    name: Mapped[str | None] = mapped_column(String(255))
+    city: Mapped[str | None] = mapped_column(String(255))
+    latitude: Mapped[float | None] = mapped_column(Float)
+    longitude: Mapped[float | None] = mapped_column(Float)
     stop_order: Mapped[int] = mapped_column(Integer, nullable=False)
     duration_from_origin_minutes: Mapped[int | None] = mapped_column(Integer)
+    stop_duration_minutes: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     price_from_origin: Mapped[float | None] = mapped_column(Numeric(12, 2))
     is_pickup_point: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     is_dropoff_point: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    is_rest_stop: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    notes: Mapped[str | None] = mapped_column(Text)
 
     route: Mapped["Route"] = relationship(back_populates="stops")
-    terminal: Mapped["Terminal"] = relationship()
+    terminal: Mapped["Terminal | None"] = relationship()
