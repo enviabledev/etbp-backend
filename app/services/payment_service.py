@@ -200,6 +200,21 @@ async def handle_paystack_webhook(
     payment.gateway_response = data
     payment.paid_at = datetime.now(timezone.utc)
 
+    # Check if this is a luggage addon payment
+    metadata = data.get("metadata", {})
+    if metadata.get("type") == "luggage_addon":
+        addon_id = metadata.get("addon_id")
+        if addon_id:
+            from app.models.booking_addon import BookingAddon
+            addon_result = await db.execute(
+                select(BookingAddon).where(BookingAddon.id == uuid.UUID(addon_id))
+            )
+            addon = addon_result.scalar_one_or_none()
+            if addon:
+                addon.status = "paid"
+        await db.flush()
+        return
+
     # Wallet top-up: no booking_id, credit the wallet and return
     if payment.booking_id is None:
         metadata = data.get("metadata", {})

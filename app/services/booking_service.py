@@ -750,6 +750,7 @@ async def add_luggage(
     payment_method: str = "wallet",
     is_admin: bool = False,
     payment_reference: str | None = None,
+    callback_url: str | None = None,
 ) -> dict:
     booking = await get_booking_by_reference(db, reference, user_id if not is_admin else None)
 
@@ -822,6 +823,60 @@ async def add_luggage(
         await db.flush()
         addon.payment_id = payment.id
         addon.status = "paid"
+    elif payment_method == "card":
+        from app.models.payment import Payment
+        from app.core.constants import PaymentStatus
+        from app.integrations.paystack import PaystackClient
+
+        # Create pending payment
+        payment = Payment(
+            booking_id=booking.id, user_id=user_id,
+            amount=total_price, method="card",
+            status=PaymentStatus.PENDING, gateway="paystack",
+        )
+        db.add(payment)
+        await db.flush()
+
+        # Resolve email for Paystack
+        from app.models.user import User
+        user_result = await db.execute(select(User).where(User.id == user_id))
+        user = user_result.scalar_one()
+        email = booking.contact_email or user.email or ""
+        if not email:
+            raise BadRequestError("Email required for card payment. Please update your profile.")
+
+        addon.payment_id = payment.id
+        addon.status = "pending"
+        db.add(addon)
+        await db.flush()
+
+        # Initialize Paystack transaction
+        client = PaystackClient()
+        paystack_data = await client.initialize_transaction(
+            email=email,
+            amount=int(total_price * 100),  # kobo
+            reference=str(payment.id),
+            callback_url=callback_url,
+            metadata={
+                "type": "luggage_addon",
+                "addon_id": str(addon.id),
+                "booking_id": str(booking.id),
+            },
+        )
+        payment.gateway_reference = paystack_data.get("reference")
+        await db.flush()
+
+        return {
+            "id": str(addon.id),
+            "booking_ref": booking.reference,
+            "addon_type": addon.addon_type,
+            "quantity": addon.quantity,
+            "unit_price": float(addon.unit_price),
+            "total_price": float(addon.total_price),
+            "status": addon.status,
+            "payment_url": paystack_data.get("authorization_url", ""),
+            "payment_reference": paystack_data.get("reference", ""),
+        }
     else:
         addon.status = "pending"
 

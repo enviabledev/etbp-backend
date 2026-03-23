@@ -131,6 +131,7 @@ async def add_luggage_endpoint(
 ):
     return await booking_service.add_luggage(
         db, current_user.id, reference, data.quantity, data.payment_method,
+        callback_url=data.callback_url,
     )
 
 

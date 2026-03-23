@@ -195,3 +195,4 @@ class TransferRequest(BaseModel):
 class AddLuggageRequest(BaseModel):
     quantity: int = Field(..., ge=1, le=10)
     payment_method: str = "wallet"
+    callback_url: str | None = None
